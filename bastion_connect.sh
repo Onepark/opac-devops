@@ -18,6 +18,8 @@ POSTGRES_PORT="5432"
 LOCAL_PORT="5432"
 BACKGROUND_MODE=false
 USE_CUSTOM_HOST=false
+ASSUME_ROLE_ARN=""
+EXTERNAL_ID=""
 
 print_help() {
   cat <<EOF
@@ -31,6 +33,10 @@ Options de connexion:
   --secret-key <AWS_SECRET_KEY>  : Clé secrète AWS
   --session-token <AWS_SESSION_TOKEN> : Token session (optionnel)
   --region <aws-region>          : Région AWS (default: ${REGION})
+
+Options cross-account:
+  --assume-role <role-arn>       : ARN du rôle à assumer pour l'accès cross-account
+  --external-id <external-id>    : External ID pour l'assume role (sécurité)
 
 Options de port forwarding PostgreSQL:
   --forward <postgres-hostname>  : Nom d'hôte du PostgreSQL pour le port forwarding
@@ -52,7 +58,8 @@ Exemples:
   # Port forwarding avec nom extrait automatiquement
   $0 --name my-bastion --profile prod --forward prod-rds-replica.cto2gdmsi0x4.eu-west-3.rds.amazonaws.com --custom-host
 
-  # Résultat: connexion possible via prod-rds-replica:5432
+  # Cross-account avec assume role
+  $0 --name my-bastion --assume-role arn:aws:iam::COMPTE-PROD:role/BastionAccessRole --external-id bastion-access-2024 --forward prod-rds-replica.amazonaws.com
 EOF
 }
 
@@ -70,6 +77,8 @@ while [[ $# -gt 0 ]]; do
     --postgres-port) POSTGRES_PORT="$2"; shift 2;;
     --local-port) LOCAL_PORT="$2"; shift 2;;
     --background) BACKGROUND_MODE=true; shift 1;;
+    --assume-role) ASSUME_ROLE_ARN="$2"; shift 2;;
+    --external-id) EXTERNAL_ID="$2"; shift 2;;
     --custom-host) USE_CUSTOM_HOST=true; shift 1;;
     -h|--help) print_help; exit 0;;
     *) echo "Option inconnue: $1"; print_help; exit 1;;
@@ -117,23 +126,55 @@ fi
 
 # Export credentials si fournis
 export AWS_REGION="$REGION"
-[[ -n "$AWS_ACCESS_KEY" ]] && export AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY"
-[[ -n "$AWS_SECRET_KEY" ]] && export AWS_SECRET_ACCESS_KEY="$AWS_SECRET_KEY"
-[[ -n "$AWS_SESSION_TOKEN" ]] && export AWS_SESSION_TOKEN="$AWS_SESSION_TOKEN"
-[[ -n "$AWS_PROFILE" ]] && export AWS_PROFILE="$AWS_PROFILE"
+
+# Gestion de l'assume role
+if [[ -n "$ASSUME_ROLE_ARN" ]]; then
+  echo "🔐 Assume role vers: $ASSUME_ROLE_ARN"
+  
+  # Construction de la commande assume-role
+  ASSUME_CMD="aws sts assume-role --role-arn $ASSUME_ROLE_ARN --role-session-name bastion-session-$(date +%s)"
+  
+  if [[ -n "$EXTERNAL_ID" ]]; then
+    ASSUME_CMD="$ASSUME_CMD --external-id $EXTERNAL_ID"
+  fi
+  
+  if [[ -n "$AWS_PROFILE" ]]; then
+    ASSUME_CMD="$ASSUME_CMD --profile $AWS_PROFILE"
+  fi
+  
+  # Exécution de l'assume role
+  echo "📋 Récupération des credentials temporaires..."
+  ASSUME_RESULT=$(eval "$ASSUME_CMD" --output json)
+  
+  if [[ $? -eq 0 ]]; then
+    # Extraction des credentials
+    export AWS_ACCESS_KEY_ID=$(echo "$ASSUME_RESULT" | jq -r '.Credentials.AccessKeyId')
+    export AWS_SECRET_ACCESS_KEY=$(echo "$ASSUME_RESULT" | jq -r '.Credentials.SecretAccessKey')
+    export AWS_SESSION_TOKEN=$(echo "$ASSUME_RESULT" | jq -r '.Credentials.SessionToken')
+    
+    echo "✅ Assume role réussi. Credentials temporaires configurés."
+    
+    # Désactiver le profil AWS pour utiliser les variables d'environnement
+    unset AWS_PROFILE
+  else
+    echo "❌ Erreur lors de l'assume role. Vérifiez vos permissions et le rôle."
+    exit 4
+  fi
+else
+  # Configuration normale des credentials
+  [[ -n "$AWS_ACCESS_KEY" ]] && export AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY"
+  [[ -n "$AWS_SECRET_KEY" ]] && export AWS_SECRET_ACCESS_KEY="$AWS_SECRET_KEY"
+  [[ -n "$AWS_SESSION_TOKEN" ]] && export AWS_SESSION_TOKEN="$AWS_SESSION_TOKEN"
+  [[ -n "$AWS_PROFILE" ]] && export AWS_PROFILE="$AWS_PROFILE"
+fi
 
 # Résolution instance si --name utilisé
 if [[ -z "$INSTANCE_ID" && -n "$INSTANCE_NAME" ]]; then
   echo "🔎 Recherche de l'instance avec Name tag = '$INSTANCE_NAME'..."
-  if [[ -n "$AWS_PROFILE" ]]; then
-    INSTANCE_ID=$(aws ec2 describe-instances \
-      --filters "Name=tag:Name,Values=${INSTANCE_NAME}" "Name=instance-state-name,Values=running" \
-      --query 'Reservations[0].Instances[0].InstanceId' --output text --region "$REGION" --profile "$AWS_PROFILE")
-  else
-    INSTANCE_ID=$(aws ec2 describe-instances \
-      --filters "Name=tag:Name,Values=${INSTANCE_NAME}" "Name=instance-state-name,Values=running" \
-      --query 'Reservations[0].Instances[0].InstanceId' --output text --region "$REGION")
-  fi
+  INSTANCE_ID=$(aws ec2 describe-instances \
+    --filters "Name=tag:Name,Values=${INSTANCE_NAME}" "Name=instance-state-name,Values=running" \
+    --query 'Reservations[0].Instances[0].InstanceId' --output text --region "$REGION")
+  
   if [[ -z "$INSTANCE_ID" || "$INSTANCE_ID" == "None" ]]; then
     echo "❌ Erreur: aucune instance running trouvée avec Name='$INSTANCE_NAME' dans $REGION."
     exit 3
@@ -206,46 +247,24 @@ if [[ -n "$POSTGRES_HOST" ]]; then
   
   # Lancement du port forwarding
   if [[ "$BACKGROUND_MODE" == true ]]; then
-    if [[ -n "$AWS_PROFILE" ]]; then
-      aws ssm start-session \
-        --target "$INSTANCE_ID" \
-        --document-name "AWS-StartPortForwardingSessionToRemoteHost" \
-        --parameters "{\"host\":[\"$POSTGRES_HOST\"],\"portNumber\":[\"$POSTGRES_PORT\"],\"localPortNumber\":[\"$LOCAL_PORT\"]}" \
-        --region "$REGION" \
-        --profile "$AWS_PROFILE" &
-    else
-      aws ssm start-session \
-        --target "$INSTANCE_ID" \
-        --document-name "AWS-StartPortForwardingSessionToRemoteHost" \
-        --parameters "{\"host\":[\"$POSTGRES_HOST\"],\"portNumber\":[\"$POSTGRES_PORT\"],\"localPortNumber\":[\"$LOCAL_PORT\"]}" \
-        --region "$REGION" &
-    fi
+    aws ssm start-session \
+      --target "$INSTANCE_ID" \
+      --document-name "AWS-StartPortForwardingSessionToRemoteHost" \
+      --parameters "{\"host\":[\"$POSTGRES_HOST\"],\"portNumber\":[\"$POSTGRES_PORT\"],\"localPortNumber\":[\"$LOCAL_PORT\"]}" \
+      --region "$REGION" &
     TUNNEL_PID=$!
     echo "✅ Tunnel PostgreSQL démarré en arrière-plan (PID: $TUNNEL_PID)"
     echo "🔗 Connexion disponible sur $CONNECTION_HOST:$LOCAL_PORT"
     echo "🛑 Pour arrêter: kill $TUNNEL_PID"
   else
-    if [[ -n "$AWS_PROFILE" ]]; then
-      aws ssm start-session \
-        --target "$INSTANCE_ID" \
-        --document-name "AWS-StartPortForwardingSessionToRemoteHost" \
-        --parameters "{\"host\":[\"$POSTGRES_HOST\"],\"portNumber\":[\"$POSTGRES_PORT\"],\"localPortNumber\":[\"$LOCAL_PORT\"]}" \
-        --region "$REGION" \
-        --profile "$AWS_PROFILE"
-    else
-      aws ssm start-session \
-        --target "$INSTANCE_ID" \
-        --document-name "AWS-StartPortForwardingSessionToRemoteHost" \
-        --parameters "{\"host\":[\"$POSTGRES_HOST\"],\"portNumber\":[\"$POSTGRES_PORT\"],\"localPortNumber\":[\"$LOCAL_PORT\"]}" \
-        --region "$REGION"
-    fi
+    aws ssm start-session \
+      --target "$INSTANCE_ID" \
+      --document-name "AWS-StartPortForwardingSessionToRemoteHost" \
+      --parameters "{\"host\":[\"$POSTGRES_HOST\"],\"portNumber\":[\"$POSTGRES_PORT\"],\"localPortNumber\":[\"$LOCAL_PORT\"]}" \
+      --region "$REGION"
   fi
 else
   # Connexion interactive normale
-  echo "�� Connexion à $INSTANCE_ID via SSM (région $REGION)..."
-  if [[ -n "$AWS_PROFILE" ]]; then
-    aws ssm start-session --target "$INSTANCE_ID" --region "$REGION" --profile "$AWS_PROFILE"
-  else
-    aws ssm start-session --target "$INSTANCE_ID" --region "$REGION"
-  fi
+  echo "🚀 Connexion à $INSTANCE_ID via SSM (région $REGION)..."
+  aws ssm start-session --target "$INSTANCE_ID" --region "$REGION"
 fi
