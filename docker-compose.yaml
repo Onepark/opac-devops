@@ -1,0 +1,9 @@
+---
+services:
+  step-anonymisation:
+    image: step-anonymisation
+    container_name: step-anonymisation
+    volumes:
+      - ${HOME}/.aws:/home/nonroot/.aws
+
+    network_mode: host
