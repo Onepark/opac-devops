@@ -7,10 +7,9 @@ set -euo pipefail
 
 # Defaults
 REGION="eu-west-3"
-AWS_PROFILE=""
-AWS_ACCESS_KEY=""
-AWS_SECRET_KEY=""
-AWS_SESSION_TOKEN=""
+# AWS_ACCESS_KEY=""
+# AWS_SECRET_KEY=""
+# AWS_SESSION_TOKEN=""
 INSTANCE_ID=""
 INSTANCE_NAME=""
 POSTGRES_HOST=""
@@ -28,7 +27,6 @@ Usage: $0 [options]
 Options de connexion:
   --instance <instance-id>       : ID de l'instance EC2 (ex: i-0123456789abcdef)
   --name <Name-tag>              : Valeur du tag 'Name' pour retrouver l'instance
-  --profile <aws-profile>        : Profil AWS à utiliser
   --access-key <AWS_ACCESS_KEY>  : Clé d'accès AWS
   --secret-key <AWS_SECRET_KEY>  : Clé secrète AWS
   --session-token <AWS_SESSION_TOKEN> : Token session (optionnel)
@@ -127,46 +125,46 @@ fi
 # Export credentials si fournis
 export AWS_REGION="$REGION"
 
-# Gestion de l'assume role
-if [[ -n "$ASSUME_ROLE_ARN" ]]; then
-  echo "🔐 Assume role vers: $ASSUME_ROLE_ARN"
+# # Gestion de l'assume role
+# if [[ -n "$ASSUME_ROLE_ARN" ]]; then
+#   echo "🔐 Assume role vers: $ASSUME_ROLE_ARN"
   
-  # Construction de la commande assume-role
-  ASSUME_CMD="aws sts assume-role --role-arn $ASSUME_ROLE_ARN --role-session-name bastion-session-$(date +%s)"
+#   # Construction de la commande assume-role
+#   ASSUME_CMD="aws sts assume-role --role-arn $ASSUME_ROLE_ARN --role-session-name bastion-session-$(date +%s)"
   
-  if [[ -n "$EXTERNAL_ID" ]]; then
-    ASSUME_CMD="$ASSUME_CMD --external-id $EXTERNAL_ID"
-  fi
+#   if [[ -n "$EXTERNAL_ID" ]]; then
+#     ASSUME_CMD="$ASSUME_CMD --external-id $EXTERNAL_ID"
+#   fi
   
-  if [[ -n "$AWS_PROFILE" ]]; then
-    ASSUME_CMD="$ASSUME_CMD --profile $AWS_PROFILE"
-  fi
+#   if [[ -n "$AWS_PROFILE" ]]; then
+#     ASSUME_CMD="$ASSUME_CMD --profile $AWS_PROFILE"
+#   fi
   
-  # Exécution de l'assume role
-  echo "📋 Récupération des credentials temporaires..."
-  ASSUME_RESULT=$(eval "$ASSUME_CMD" --output json)
+#   # Exécution de l'assume role
+#   echo "📋 Récupération des credentials temporaires..."
+#   ASSUME_RESULT=$(eval "$ASSUME_CMD" --output json)
   
-  if [[ $? -eq 0 ]]; then
-    # Extraction des credentials
-    export AWS_ACCESS_KEY_ID=$(echo "$ASSUME_RESULT" | jq -r '.Credentials.AccessKeyId')
-    export AWS_SECRET_ACCESS_KEY=$(echo "$ASSUME_RESULT" | jq -r '.Credentials.SecretAccessKey')
-    export AWS_SESSION_TOKEN=$(echo "$ASSUME_RESULT" | jq -r '.Credentials.SessionToken')
+#   if [[ $? -eq 0 ]]; then
+#     # Extraction des credentials
+#     export AWS_ACCESS_KEY_ID=$(echo "$ASSUME_RESULT" | jq -r '.Credentials.AccessKeyId')
+#     export AWS_SECRET_ACCESS_KEY=$(echo "$ASSUME_RESULT" | jq -r '.Credentials.SecretAccessKey')
+#     export AWS_SESSION_TOKEN=$(echo "$ASSUME_RESULT" | jq -r '.Credentials.SessionToken')
     
-    echo "✅ Assume role réussi. Credentials temporaires configurés."
+#     echo "✅ Assume role réussi. Credentials temporaires configurés."
     
-    # Désactiver le profil AWS pour utiliser les variables d'environnement
-    unset AWS_PROFILE
-  else
-    echo "❌ Erreur lors de l'assume role. Vérifiez vos permissions et le rôle."
-    exit 4
-  fi
-else
-  # Configuration normale des credentials
-  [[ -n "$AWS_ACCESS_KEY" ]] && export AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY"
-  [[ -n "$AWS_SECRET_KEY" ]] && export AWS_SECRET_ACCESS_KEY="$AWS_SECRET_KEY"
-  [[ -n "$AWS_SESSION_TOKEN" ]] && export AWS_SESSION_TOKEN="$AWS_SESSION_TOKEN"
-  [[ -n "$AWS_PROFILE" ]] && export AWS_PROFILE="$AWS_PROFILE"
-fi
+#     # Désactiver le profil AWS pour utiliser les variables d'environnement
+#     unset AWS_PROFILE
+#   else
+#     echo "❌ Erreur lors de l'assume role. Vérifiez vos permissions et le rôle."
+#     exit 4
+#   fi
+# else
+#   # Configuration normale des credentials
+#   [[ -n "$AWS_ACCESS_KEY" ]] && export AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY"
+#   [[ -n "$AWS_SECRET_KEY" ]] && export AWS_SECRET_ACCESS_KEY="$AWS_SECRET_KEY"
+#   [[ -n "$AWS_SESSION_TOKEN" ]] && export AWS_SESSION_TOKEN="$AWS_SESSION_TOKEN"
+#   [[ -n "$AWS_PROFILE" ]] && export AWS_PROFILE="$AWS_PROFILE"
+# fi
 
 # Résolution instance si --name utilisé
 if [[ -z "$INSTANCE_ID" && -n "$INSTANCE_NAME" ]]; then
