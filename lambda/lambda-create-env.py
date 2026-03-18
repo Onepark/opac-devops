@@ -1,6 +1,7 @@
 import os
 import boto3
 from datetime import datetime, timezone
+import psycopg2
 
 # this dictionary list all the columns by table where apply date drifting
 date_drifting_table_column = {
@@ -12,12 +13,12 @@ date_drifting_table_column = {
     "customers": [
         "inserted_at",
         "updated_at" ],
-    "device": [
+    "devices": [ # Doc type : device -> devices
         "last_comm_date" ],
-    "entities": [
-        "begin",
-        "End" ],
-    "entities_availabilities": [
+    # "entities": [
+    #     "begin",
+    #     "End" ], # columns does not exist
+    "entity_availabilities": [ # typo : entities_availabilities => entity_availabilities
         "begin",
         "End" ],
     "installation_device_maps": [
@@ -79,8 +80,9 @@ date_drifting_table_column = {
         "expiration" ]
 }
 
-rds = boto3.client("rds")
 REGION = os.environ['AWS_REGION']
+rds = boto3.client(service_name="rds")
+ssm = boto3.client(service_name="ssm")
 
 waiter_available = rds.get_waiter("db_instance_available")
 waiter_deleted = rds.get_waiter('db_instance_deleted')
@@ -130,9 +132,61 @@ def create_ephemeral_instance_from_snapshot(event, context):
     #     Tags=[{"Key": "ephemeral", "Value": "true"}],
     # )
 
-    return {**event, "ephemeral_id": ephemeral_id, **creation_response}
+    if creation_response:
+        return {**event, "ephemeral_id": ephemeral_id, **creation_response}
+    else:
+        return {**event, "ephemeral_id": ephemeral_id}
+
+def _get_ephemeral_db_connection(ephemeral_id: str):
+    # password, username and database name are identical to int db (comes from snapshot) and
+    # are available through env variables :
+
+    # for instance:
+    # SNAPSHOT_DB_PASSWORD=test
+    # SNAPSHOT_DB_USERNAME=test
+    # SNAPSHOT_DB_NAME=test
+    # SNAPSHOT_DB_PORT=5432
+    # SSLROOTCERTS=~/.aws/rds-certs/global-bundle.pem (when lambda is run directly from local machine)
+
+    db_password = os.environ['SNAPSHOT_DB_PASSWORD']
+    db_username = os.environ['SNAPSHOT_DB_USERNAME']
+    db_name = os.environ['SNAPSHOT_DB_NAME']
+    db_port = os.environ['SNAPSHOT_DB_PORT']
+    db_sslrootcerts = os.environ['DB_SSLROOTCERTS']
+    db_sslmode = os.environ['DB_SSLMODE']
+
+    existing_ephemeral_db = rds.describe_db_instances(DBInstanceIdentifier=ephemeral_id)["DBInstances"][0]
+
+    host = None
+
+    # retrieve ephemeral instance host
+    if existing_ephemeral_db.get("Endpoint") and existing_ephemeral_db["Endpoint"].get("Address"):
+        host = existing_ephemeral_db["Endpoint"]["Address"]
+
+    try:
+        conn = psycopg2.connect(
+            host=host,
+            port=db_port,
+            database=db_name,
+            user=db_username,
+            password=db_password,
+            sslmode=db_sslmode,
+            sslrootcert=db_sslrootcerts
+        )
+        cur = conn.cursor()
+        cur.execute('SELECT version();')
+        print(cur.fetchone()[0])
+        cur.close()
+    except Exception as e:
+        print(f"Database error: {e}")
+        raise
+
+    return conn
+
 
 def apply_date_drifting(event, context):
+    conn = _get_ephemeral_db_connection(event["ephemeral_id"])
+
     # retrieve db snapshot creation time
     res_snapshot_desc = rds.describe_db_snapshots(DBInstanceIdentifier="opk-opac-int-rds",
                                                   DBSnapshotIdentifier="golden-snapshot-20260305")
@@ -151,49 +205,32 @@ def apply_date_drifting(event, context):
         columns = drift_elements[1]
 
         for column in columns:
-            print(f"update {table} {column} to {snapshot_creation_date + delta}")
+            print(f"updating {table} {column} to snapshot creation date + {delta.days} days.")
+            sql_update = f"UPDATE \"{table}\" SET \"{column}\" = \"{column}\" + INTERVAL '{delta.days} days' WHERE \"{column}\" is not null"
+            print(f"sql query => {sql_update}")
+
+            try:
+                with conn.cursor() as c:
+                    c.execute(sql_update)
+                    updated_row_count = c.rowcount
+                    conn.commit()
+                    print(f"Updated row count => {updated_row_count} for table {table} and column {column}")
+
+            except (Exception, psycopg2.DatabaseError) as e:
+                print(f"Error updating {table} {column}: {e}")
 
     pass
 
 
 if __name__ == '__main__':
-
-    # import psycopg2
-    # import boto3
-    #
-    # auth_token = boto3.client('rds', region_name='eu-west-3').generate_db_auth_token(DBHostname='ephemeral-transform-golden-snapshot-20260305-test2.c3k4uoc6kifg.eu-west-3.rds.amazonaws.com', Port=5432, DBUsername='dn3F7cBSgMSCZWub', Region='eu-west-3')
-    #
-    # conn = None
-    # try:
-    #     conn = psycopg2.connect(
-    #         host='ephemeral-transform-golden-snapshot-20260305-test2.c3k4uoc6kifg.eu-west-3.rds.amazonaws.com',
-    #         port=5432,
-    #         database='opac',
-    #         user='dn3F7cBSgMSCZWub',
-    #         password=auth_token,
-    #         sslmode='verify-full',
-    #         sslrootcert='/certs/global-bundle.pem'
-    #     )
-    #     cur = conn.cursor()
-    #     cur.execute('SELECT version();')
-    #     print(cur.fetchone()[0])
-    #     cur.close()
-    # except Exception as e:
-    #     print(f"Database error: {e}")
-    #     raise
-    # finally:
-    #     if conn:
-    #         conn.close()
-
-
     create_event_to_send = { "environment": "test2",
                              "golden_snapshot_id": "golden-snapshot-20260305",
                              "ephemeral_id_prefix": f"ephemeral-transform" }
 
-    # res_create_ephemeral = create_ephemeral_instance_from_snapshot(create_event_to_send, None)
+    res_create_ephemeral = create_ephemeral_instance_from_snapshot(create_event_to_send, None)
 
-    # res_wait = wait_for_available_instance(res_create_ephemeral, None)
+    res_wait = wait_for_available_instance(res_create_ephemeral, None)
 
-    apply_date_drifting(create_event_to_send, None)
+    apply_date_drifting(res_create_ephemeral, None)
 
     pass
