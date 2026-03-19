@@ -4,80 +4,90 @@ from datetime import datetime, timezone
 import psycopg2
 
 # this dictionary list all the columns by table where apply date drifting
+# if begin or end in the same table, because of check constraint, end is always updated first
+# date_drifting_table_column = {
+#     "allotments": [
+#         "end",
+#         "begin" ],
+#     "connected_equipment_events": [
+#         "date" ],
+#     "customers": [
+#         "inserted_at",
+#         "updated_at" ],
+#     "devices": [ # Doc type : device -> devices
+#         "last_comm_date" ],
+#     # "entities": [
+#     #     "begin",
+#     #     "End" ], # columns does not exist
+#     # TEST
+#     # "entity_availabilities": [ # typo : entities_availabilities => entity_availabilities
+#     #     "end", # End => end
+#     #     "begin" ],
+#     # TEST END
+#     "installation_device_maps": [
+#         "end",
+#         "begin" ],
+#     "installation_logs": [
+#         "date" ],
+#     "invoices": [
+#         "date",
+#         "inserted_at",
+#         "updated_at" ],
+#     "metrics": [
+#         "end",
+#         "begin" ],
+#     "oban_jobs": [
+#         "scheduled_at" ],
+#     "oban_peers": [
+#         "started_at",
+#         "expires_at" ],
+#     "offers": [
+#         "end",
+#         "begin",
+#         "expires_at" ],
+#     "parkings": [
+#         "end",
+#         "begin",
+#         "inserted_at",
+#         "updated_at",
+#         "finished_at" ],
+#     "parking_categories": [
+#         "inserted_at",
+#         "updated_at" ],
+#     "parking_comments": [
+#         "inserted_at",
+#         "updated_at" ],
+#     "parking_prices": [
+#         "inserted_at",
+#         "updated_at" ],
+#     "parking_states": [
+#         "date" ],
+#     "payments": [
+#         "date",
+#         "paid_at",
+#         "cancelled_at",
+#         "refunded_at" ],
+#     "payment_readers": [
+#         "inserted_at",
+#         "updated_at" ],
+#     "rights": [
+#         "end",
+#         "begin" ],
+#     "scenario_logs": [
+#         "date" ],
+#     "terminals": [
+#         "inserted_at",
+#         "updated_at",
+#         "last_comm_date" ],
+#     "validation_links": [
+#         "expiration" ]
+# }
+
 date_drifting_table_column = {
-    "allotments": [
-        "begin",
-        "end" ],
-    "connected_equipment_events": [
-        "date" ],
-    "customers": [
-        "inserted_at",
-        "updated_at" ],
-    "devices": [ # Doc type : device -> devices
-        "last_comm_date" ],
-    # "entities": [
-    #     "begin",
-    #     "End" ], # columns does not exist
     "entity_availabilities": [ # typo : entities_availabilities => entity_availabilities
-        "begin",
-        "End" ],
-    "installation_device_maps": [
-        "begin",
-        "end" ],
-    "installation_logs": [
-        "date" ],
-    "invoices": [
-        "date",
-        "inserted_at",
-        "updated_at" ],
-    "metrics": [
-        "begin",
-        "end" ],
-    "oban_jobs": [
-        "scheduled_at" ],
-    "oban_peers": [
-        "started_at",
-        "expires_at" ],
-    "offers": [
-        "begin",
-        "end",
-        "expires_at" ],
-    "parkings": [
-        "begin",
-        "end",
-        "inserted_at",
-        "updated_at",
-        "finished_at" ],
-    "parking_categories": [
-        "inserted_at",
-        "updated_at" ],
-    "parking_comments": [
-        "inserted_at",
-        "updated_at" ],
-    "parking_prices": [
-        "inserted_at",
-        "updated_at" ],
-    "parking_states": [
-        "date" ],
-    "payments": [
-        "date",
-        "paid_at",
-        "cancelled_at",
-        "refunded_at" ],
-    "payment_readers": [
-        "inserted_at",
-        "updated_at" ],
-    "rights": [
-        "begin",
-        "end" ],
-    "scenario_logs": [
-        "date" ],
-    "terminals": [
-        "inserted_at",
-        "updated_at",
-        "last_comm_date" ],
-    "validation_links": [
-        "expiration" ]
+        "end", # End => end
+        "begin" ],
+    # TEST END
 }
 
 REGION = os.environ['AWS_REGION']
@@ -184,6 +194,31 @@ def _get_ephemeral_db_connection(ephemeral_id: str):
     return conn
 
 
+def _remove_overlapping_constraints(conn):
+    # TODO should take a list of tuple (table, constraint_name) to remove
+    # because there are, for some tables, validation constraints, remove constraint for sql query execution.
+    try:
+        print("Remove overlapping constraints for updates ... ")
+        with conn.cursor() as constraint_cursor:
+
+            constraint_cursor.execute("ALTER TABLE entity_availabilities DROP CONSTRAINT entity_availabilities_overlap_constraint;")
+
+            print("Overlapping constraints for updates removed !")
+    except (Exception, psycopg2.DatabaseError) as e:
+        print(f"Error removing overlapping constraints for updates : {e}")
+
+
+def _restore_overlapping_constraints(conn):
+    # TODO this function should take the same list as _remove_overlapping_constraints function in order to restore the same list of non-overlapping constraints
+    try:
+        print("Remove overlapping constraints for updates ... ")
+        with conn.cursor() as constraint_cursor:
+            constraint_cursor.execute("ALTER TABLE entity_availabilities ADD constraint entity_availabilities_overlap_constraint exclude using gist (entity_id with =, parking_category_id with =, type with =, tsrange(\"begin\", \"end\", '[)'::text) with &&);")
+            print("Overlapping constraints for updates removed !")
+    except (Exception, psycopg2.DatabaseError) as e:
+        print(f"Error disabling constraints for updates : {e}")
+
+
 def apply_date_drifting(event, context):
     conn = _get_ephemeral_db_connection(event["ephemeral_id"])
 
@@ -200,6 +235,26 @@ def apply_date_drifting(event, context):
 
     delta = utc_now - snapshot_creation_date
 
+#     alter table entity_availabilities
+#       add constraint entity_availabilities_overlap_constraint
+#       exclude using gist (entity_id with =, parking_category_id with =, type with =, tsrange(begin, "end", '[)'::text) with &&);
+#
+#     ALTER TABLE entity_availabilities
+#       DROP CONSTRAINT entity_availabilities_overlap_constraint;
+
+    # because there are, for some tables, check contraints, disable constraint for sql query execution.
+    # Contraints will be only active for commit.
+    # try:
+    #     print("Disabling constraints for updates ... ")
+    #     with conn.cursor() as constraint_cursor:
+    #         constraint_cursor.execute("SET CONSTRAINTS ALL DEFERRED")
+    #         print("Constraints for updates disabled !")
+    # except (Exception, psycopg2.DatabaseError) as e:
+    #     print(f"Error disabling constraints for updates : {e}")
+
+    _remove_overlapping_constraints(conn)
+    conn.commit()
+
     for drift_elements in date_drifting_table_column.items():
         table = drift_elements[0]
         columns = drift_elements[1]
@@ -213,12 +268,15 @@ def apply_date_drifting(event, context):
                 with conn.cursor() as c:
                     c.execute(sql_update)
                     updated_row_count = c.rowcount
-                    conn.commit()
                     print(f"Updated row count => {updated_row_count} for table {table} and column {column}")
 
             except (Exception, psycopg2.DatabaseError) as e:
                 print(f"Error updating {table} {column}: {e}")
 
+        conn.commit()
+
+    _restore_overlapping_constraints(conn)
+    conn.commit()
     pass
 
 
