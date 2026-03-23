@@ -5,89 +5,80 @@ import psycopg2
 
 # this dictionary list all the columns by table where apply date drifting
 # if begin or end in the same table, because of check constraint, end is always updated first
-# date_drifting_table_column = {
-#     "allotments": [
-#         "end",
-#         "begin" ],
-#     "connected_equipment_events": [
-#         "date" ],
-#     "customers": [
-#         "inserted_at",
-#         "updated_at" ],
-#     "devices": [ # Doc type : device -> devices
-#         "last_comm_date" ],
-#     # "entities": [
-#     #     "begin",
-#     #     "End" ], # columns does not exist
-#     # TEST
-#     # "entity_availabilities": [ # typo : entities_availabilities => entity_availabilities
-#     #     "end", # End => end
-#     #     "begin" ],
-#     # TEST END
-#     "installation_device_maps": [
-#         "end",
-#         "begin" ],
-#     "installation_logs": [
-#         "date" ],
-#     "invoices": [
-#         "date",
-#         "inserted_at",
-#         "updated_at" ],
-#     "metrics": [
-#         "end",
-#         "begin" ],
-#     "oban_jobs": [
-#         "scheduled_at" ],
-#     "oban_peers": [
-#         "started_at",
-#         "expires_at" ],
-#     "offers": [
-#         "end",
-#         "begin",
-#         "expires_at" ],
-#     "parkings": [
-#         "end",
-#         "begin",
-#         "inserted_at",
-#         "updated_at",
-#         "finished_at" ],
-#     "parking_categories": [
-#         "inserted_at",
-#         "updated_at" ],
-#     "parking_comments": [
-#         "inserted_at",
-#         "updated_at" ],
-#     "parking_prices": [
-#         "inserted_at",
-#         "updated_at" ],
-#     "parking_states": [
-#         "date" ],
-#     "payments": [
-#         "date",
-#         "paid_at",
-#         "cancelled_at",
-#         "refunded_at" ],
-#     "payment_readers": [
-#         "inserted_at",
-#         "updated_at" ],
-#     "rights": [
-#         "end",
-#         "begin" ],
-#     "scenario_logs": [
-#         "date" ],
-#     "terminals": [
-#         "inserted_at",
-#         "updated_at",
-#         "last_comm_date" ],
-#     "validation_links": [
-#         "expiration" ]
-# }
-
 date_drifting_table_column = {
+    "allotments": [
+        "end",
+        "begin" ],
+    "connected_equipment_events": [
+        "date" ],
+    "customers": [
+        "inserted_at",
+        "updated_at" ],
+    "devices": [ # Doc type : device -> devices
+        "last_comm_date" ],
+    # "entities": [
+    #     "begin",
+    #     "End" ], # columns does not exist
     "entity_availabilities": [ # typo : entities_availabilities => entity_availabilities
         "end", # End => end
         "begin" ],
-    # TEST END
+    "installation_device_maps": [
+        "end",
+        "begin" ],
+    "installation_logs": [
+        "date" ],
+    "invoices": [
+        "date",
+        "inserted_at",
+        "updated_at" ],
+    "metrics": [
+        "end",
+        "begin" ],
+    "oban_jobs": [
+        "scheduled_at" ],
+    "oban_peers": [
+        "started_at",
+        "expires_at" ],
+    "offers": [
+        "end",
+        "begin",
+        "expires_at" ],
+    "parkings": [
+        "end",
+        "begin",
+        "inserted_at",
+        "updated_at",
+        "finished_at" ],
+    "parking_categories": [
+        "inserted_at",
+        "updated_at" ],
+    "parking_comments": [
+        "inserted_at",
+        "updated_at" ],
+    "parking_prices": [
+        "inserted_at",
+        "updated_at" ],
+    "parking_states": [
+        "date" ],
+    "payments": [
+        "date",
+        "paid_at",
+        "cancelled_at",
+        "refunded_at" ],
+    "payment_readers": [
+        "inserted_at",
+        "updated_at" ],
+    "rights": [
+        "end",
+        "begin" ],
+    "scenario_logs": [
+        "date" ],
+    "terminals": [
+        "inserted_at",
+        "updated_at",
+        "last_comm_date" ],
+    "validation_links": [
+        "expiration" ]
 }
 
 REGION = os.environ['AWS_REGION']
@@ -120,27 +111,34 @@ def wait_for_available_instance(event, context):
         "is_available": instance["DBInstanceStatus"] == "available",
     }
 
-def create_ephemeral_instance_from_snapshot(event, context):
-    env = event["environment"]
+def create_ephemeral_instance_from_snapshot(event, context, create_rds_instance=True):
+    target_env_name = event["target_env_name"]
+    source_env_name = None
+    rds_target_db_instance_class = None
+    rds_target_db_subnet_group = None
+    rds_target_vpc_security_groups = None
+
+
     golden_snapshot_id = "golden-snapshot-20260305"
-    ephemeral_id = f"{event['ephemeral_id_prefix']}-{golden_snapshot_id}-{env}"
+    ephemeral_id = f"{event['ephemeral_id_prefix']}-{golden_snapshot_id}-{target_env_name}"
 
     existing = rds.describe_db_instances(DBInstanceIdentifier="opk-opac-int-rds", )["DBInstances"][0]
 
     creation_response = None
 
-    # creation_response = rds.restore_db_instance_from_db_snapshot(
-    #     DBInstanceIdentifier=ephemeral_id,
-    #     DBSnapshotIdentifier=golden_snapshot_id,
-    #     DBInstanceClass=existing["DBInstanceClass"],
-    #     DBSubnetGroupName=existing["DBSubnetGroup"]["DBSubnetGroupName"],
-    #     VpcSecurityGroupIds=[
-    #         sg["VpcSecurityGroupId"] for sg in existing["VpcSecurityGroups"]
-    #     ],
-    #     EnableIAMDatabaseAuthentication=True,
-    #     DeletionProtection=False,
-    #     Tags=[{"Key": "ephemeral", "Value": "true"}],
-    # )
+    if create_rds_instance:
+        creation_response = rds.restore_db_instance_from_db_snapshot(
+            DBInstanceIdentifier=ephemeral_id,
+            DBSnapshotIdentifier=golden_snapshot_id,
+            DBInstanceClass=existing["DBInstanceClass"],
+            DBSubnetGroupName=existing["DBSubnetGroup"]["DBSubnetGroupName"],
+            VpcSecurityGroupIds=[
+                sg["VpcSecurityGroupId"] for sg in existing["VpcSecurityGroups"]
+            ],
+            EnableIAMDatabaseAuthentication=True,
+            DeletionProtection=False,
+            Tags=[{"Key": "ephemeral", "Value": "true"}],
+        )
 
     if creation_response:
         return {**event, "ephemeral_id": ephemeral_id, **creation_response}
@@ -195,7 +193,6 @@ def _get_ephemeral_db_connection(ephemeral_id: str):
 
 
 def _remove_overlapping_constraints(conn):
-    # TODO should take a list of tuple (table, constraint_name) to remove
     # because there are, for some tables, validation constraints, remove constraint for sql query execution.
     try:
         print("Remove overlapping constraints for updates ... ")
@@ -224,7 +221,7 @@ def apply_date_drifting(event, context):
 
     # retrieve db snapshot creation time
     res_snapshot_desc = rds.describe_db_snapshots(DBInstanceIdentifier="opk-opac-int-rds",
-                                                  DBSnapshotIdentifier="golden-snapshot-20260305")
+                                                  DBSnapshotIdentifier="golden-snapshot-20260305") # TODO use arn arn:aws:rds:eu-west-3:418484240945:snapshot:golden-snapshot-20260305-postgres-18
 
     if res_snapshot_desc and res_snapshot_desc.get("DBSnapshots") and len(res_snapshot_desc["DBSnapshots"]):
         snapshot_creation_date = res_snapshot_desc["DBSnapshots"][0]["SnapshotCreateTime"]
@@ -234,23 +231,6 @@ def apply_date_drifting(event, context):
     utc_now = datetime.now(timezone.utc)
 
     delta = utc_now - snapshot_creation_date
-
-#     alter table entity_availabilities
-#       add constraint entity_availabilities_overlap_constraint
-#       exclude using gist (entity_id with =, parking_category_id with =, type with =, tsrange(begin, "end", '[)'::text) with &&);
-#
-#     ALTER TABLE entity_availabilities
-#       DROP CONSTRAINT entity_availabilities_overlap_constraint;
-
-    # because there are, for some tables, check contraints, disable constraint for sql query execution.
-    # Contraints will be only active for commit.
-    # try:
-    #     print("Disabling constraints for updates ... ")
-    #     with conn.cursor() as constraint_cursor:
-    #         constraint_cursor.execute("SET CONSTRAINTS ALL DEFERRED")
-    #         print("Constraints for updates disabled !")
-    # except (Exception, psycopg2.DatabaseError) as e:
-    #     print(f"Error disabling constraints for updates : {e}")
 
     _remove_overlapping_constraints(conn)
     conn.commit()
@@ -281,11 +261,11 @@ def apply_date_drifting(event, context):
 
 
 if __name__ == '__main__':
-    create_event_to_send = { "environment": "test2",
+    create_event_to_send = { "target_env_name": "test2", "source_env_name": "int",
                              "golden_snapshot_id": "golden-snapshot-20260305",
-                             "ephemeral_id_prefix": f"ephemeral-transform" }
+                             "ephemeral_id_prefix": "ephemeral-transform" }
 
-    res_create_ephemeral = create_ephemeral_instance_from_snapshot(create_event_to_send, None)
+    res_create_ephemeral = create_ephemeral_instance_from_snapshot(event=create_event_to_send, context=None, create_rds_instance=False)
 
     res_wait = wait_for_available_instance(res_create_ephemeral, None)
 
