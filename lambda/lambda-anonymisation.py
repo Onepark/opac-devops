@@ -5,42 +5,43 @@ import psycopg2
 
 # this dictionary list all the columns by table where apply anonymisation
 anonymisation_table_columns = {
-    "access_ways" : [
-        "desc" # // Only when type = "license_plate" or "phone"
-    ],
-    "customers": [
-        "email",
-        "firstname",
-        "lastname",
-        "phone" ],
-    "entities": [
-        "contact_info" # (jsonb)
-    ],
-    "entity_settings": [
-        "email",
-        "phone" ],
-    "installation_logs": [
-        "desc",
-        "read_desc" ],
-    "invoices": [
-        "customer_name" ]
-    "parkings": [
-        "email"
-        "firstname"
-        "lastname" ],
-    "partners": [
-        "email_for_commission_invoices",
-        "iban",
-        "name",
-        "national_identifier"
-    ],
-    "payments": [
-        "customer_name"
-    ],
+    "access_ways" :
+        """SET "desc" = left(md5("desc" || 'SECRET_SALT'), 16)
+           WHERE "type" = 'license_plate' OR "type" = 'phone';""" # // Only when type = "license_plate" or "phone"
+    ,
+    "customers":
+        """SET email = 'anon_' || left(md5(email || 'SECRET_SALT'), 12) || '@test.local',
+               firstname = left(md5(firstname || 'SECRET_SALT'), 16),
+               lastname = left(md5(lastname || 'SECRET_SALT'), 16),
+               phone = left(md5(phone || 'SECRET_SALT'), 16);""",
+    "entities":
+       """SET contact_info['email'] = to_jsonb('anon_' || left(md5(contact_info ->> 'email' || 'SECRET_SALT'), 12) || '@test.local'),
+              contact_info['phone'] = to_jsonb(left(md5(contact_info ->> 'phone' || 'SECRET_SALT'), 16))
+          WHERE contact_info is not null;""",
+
+    "entity_settings":
+        """SET email = 'anon_' || left(md5(email || 'SECRET_SALT'), 12) || '@test.local',
+               phone = left(md5(phone || 'SECRET_SALT'), 16);""",
+    "installation_logs":
+        """SET "desc" = left(md5("desc" || 'SECRET_SALT'), 16),
+               read_desc = left(md5(read_desc || 'SECRET_SALT'), 16);""",
+    "invoices":
+        """SET customer_name = left(md5(customer_name || 'SECRET_SALT'), 16);""" ,
+    "parkings":
+        """SET email = 'anon_' || left(md5(email || 'SECRET_SALT'), 12) || '@test.local',
+               firstname = left(md5(firstname || 'SECRET_SALT'), 16),
+               lastname = left(md5(lastname || 'SECRET_SALT'), 16);""",
+    "partners":
+        """SET email_for_commission_invoices = 'anon_' || left(md5(email_for_commission_invoices || 'SECRET_SALT'), 12) || '@test.local',
+               iban = left(md5(iban || 'SECRET_SALT'), 16),
+               name = left(md5(name || 'SECRET_SALT'), 16),
+               national_identifier = left(md5(national_identifier || 'SECRET_SALT'), 16);""",
+    "payments":
+        """SET customer_name = left(md5(customer_name || 'SECRET_SALT'), 16);""",
     "users": [
-        "email",
-        "firstname",
-        "lastname"
+        """SET email = 'anon_' || left(md5(email || 'SECRET_SALT'), 12) || '@test.local',
+               firstname = left(md5(firstname || 'SECRET_SALT'), 16),
+               lastname = left(md5(lastname || 'SECRET_SALT'), 16);"""
     ]
 }
 
@@ -51,7 +52,7 @@ ssm = boto3.client(service_name="ssm")
 waiter_available = rds.get_waiter("db_instance_available")
 waiter_deleted = rds.get_waiter('db_instance_deleted')
 
-def _get_ephemeral_db_connection(ephemeral_id: str):
+def _get_ephemeral_db_connection(ephemeral_host: str):
     # password are available through env variables :
 
     # for instance:
@@ -68,17 +69,9 @@ def _get_ephemeral_db_connection(ephemeral_id: str):
     db_sslrootcerts = os.environ['DB_SSLROOTCERTS']
     db_sslmode = os.environ['DB_SSLMODE']
 
-    existing_ephemeral_db = rds.describe_db_instances(DBInstanceIdentifier=ephemeral_id)["DBInstances"][0]
-
-    host = None
-
-    # retrieve ephemeral instance host
-    if existing_ephemeral_db.get("Endpoint") and existing_ephemeral_db["Endpoint"].get("Address"):
-        host = existing_ephemeral_db["Endpoint"]["Address"]
-
     try:
         conn = psycopg2.connect(
-            host=host,
+            host=ephemeral_host,
             port=db_port,
             database=db_name,
             user=db_username,
@@ -97,83 +90,41 @@ def _get_ephemeral_db_connection(ephemeral_id: str):
     return conn
 
 
-def _remove_overlapping_constraints(conn):
-    # because there are, for some tables, validation constraints, remove constraint for sql query execution.
-    try:
-        print("Remove overlapping constraints for updates ... ")
-        with conn.cursor() as constraint_cursor:
+def apply_anonymisation(event, context):
+    conn = _get_ephemeral_db_connection(event["ephemeral_host"])
 
-            constraint_cursor.execute("ALTER TABLE entity_availabilities DROP CONSTRAINT entity_availabilities_overlap_constraint;")
+    for anon_elements in anonymisation_table_columns.items():
+        table = anon_elements[0]
+        set_clause = anon_elements[1]
 
-            print("Overlapping constraints for updates removed !")
-    except (Exception, psycopg2.DatabaseError) as e:
-        print(f"Error removing overlapping constraints for updates : {e}")
+        update_query = f"UPDATE {table} {set_clause}"
 
+        print(f"anonymisation sql query => {update_query}")
 
-def _restore_overlapping_constraints(conn):
-    # TODO this function should take the same list as _remove_overlapping_constraints function in order to restore the same list of non-overlapping constraints
-    try:
-        print("Remove overlapping constraints for updates ... ")
-        with conn.cursor() as constraint_cursor:
-            constraint_cursor.execute("ALTER TABLE entity_availabilities ADD constraint entity_availabilities_overlap_constraint exclude using gist (entity_id with =, parking_category_id with =, type with =, tsrange(\"begin\", \"end\", '[)'::text) with &&);")
-            print("Overlapping constraints for updates removed !")
-    except (Exception, psycopg2.DatabaseError) as e:
-        print(f"Error disabling constraints for updates : {e}")
+        try:
+            with conn.cursor() as c:
+                c.execute(update_query)
+                updated_row_count = c.rowcount
+                print(f"Anonymisation updated row count => {updated_row_count} for table {table}")
 
-
-def apply_date_drifting(event, context):
-    conn = _get_ephemeral_db_connection(event["ephemeral_id"])
-
-    # retrieve db snapshot creation time
-    res_snapshot_desc = rds.describe_db_snapshots(DBInstanceIdentifier="opk-opac-int-rds",
-                                                  DBSnapshotIdentifier="golden-snapshot-20260305")
-
-    if res_snapshot_desc and res_snapshot_desc.get("DBSnapshots") and len(res_snapshot_desc["DBSnapshots"]):
-        snapshot_creation_date = res_snapshot_desc["DBSnapshots"][0]["SnapshotCreateTime"]
-    else:
-        raise Exception("Can't retrieve snapshot creation date.")
-
-    utc_now = datetime.now(timezone.utc)
-
-    delta = utc_now - snapshot_creation_date
-
-    _remove_overlapping_constraints(conn)
-    conn.commit()
-
-    for drift_elements in date_drifting_table_column.items():
-        table = drift_elements[0]
-        columns = drift_elements[1]
-
-        for column in columns:
-            print(f"updating {table} {column} to snapshot creation date + {delta.days} days.")
-            sql_update = f"UPDATE \"{table}\" SET \"{column}\" = \"{column}\" + INTERVAL '{delta.days} days' WHERE \"{column}\" is not null"
-            print(f"sql query => {sql_update}")
-
-            try:
-                with conn.cursor() as c:
-                    c.execute(sql_update)
-                    updated_row_count = c.rowcount
-                    print(f"Updated row count => {updated_row_count} for table {table} and column {column}")
-
-            except (Exception, psycopg2.DatabaseError) as e:
-                print(f"Error updating {table} {column}: {e}")
+        except (Exception, psycopg2.DatabaseError) as e:
+            print(f"Anonymisation Error on {table} => {set_clause}: {e}")
 
         conn.commit()
 
-    _restore_overlapping_constraints(conn)
     conn.commit()
     pass
 
 
 if __name__ == '__main__':
-    create_event_to_send = { "target_env_name": "test2", "source_env_name": "int",
-                             "golden_snapshot_id": "golden-snapshot-20260305",
-                             "ephemeral_id_prefix": "ephemeral-transform" }
+    anonymize_event_to_send = { "target_env_name": "test2", "source_env_name": "int",
+                                "golden_snapshot_id": "golden-snapshot-20260305",
+                                "ephemeral_host": "ephemeral-transform-golden-snapshot-20260305-test2.c3k4uoc6kifg.eu-west-3.rds.amazonaws.com" }
+    #
+    # res_create_ephemeral = create_ephemeral_instance_from_snapshot(event=create_event_to_send, context=None, create_rds_instance=False)
+    #
+    # res_wait = wait_for_available_instance(res_create_ephemeral, None)
 
-    res_create_ephemeral = create_ephemeral_instance_from_snapshot(event=create_event_to_send, context=None, create_rds_instance=False)
-
-    res_wait = wait_for_available_instance(res_create_ephemeral, None)
-
-    apply_date_drifting(res_create_ephemeral, None)
+    apply_anonymisation(anonymize_event_to_send, None)
 
     pass

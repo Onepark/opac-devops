@@ -119,7 +119,7 @@ def create_ephemeral_instance_from_snapshot(event, context, create_rds_instance=
     rds_target_vpc_security_groups = None
 
 
-    golden_snapshot_id = "golden-snapshot-20260305"
+    golden_snapshot_id = event["golden_snapshot_id"]
     ephemeral_id = f"{event['ephemeral_id_prefix']}-{golden_snapshot_id}-{target_env_name}"
 
     existing = rds.describe_db_instances(DBInstanceIdentifier="opk-opac-int-rds", )["DBInstances"][0]
@@ -221,7 +221,7 @@ def apply_date_drifting(event, context):
 
     # retrieve db snapshot creation time
     res_snapshot_desc = rds.describe_db_snapshots(DBInstanceIdentifier="opk-opac-int-rds",
-                                                  DBSnapshotIdentifier="golden-snapshot-20260305") # TODO use arn arn:aws:rds:eu-west-3:418484240945:snapshot:golden-snapshot-20260305-postgres-18
+                                                  DBSnapshotIdentifier=event["golden_snapshot_id"]) # TODO use arn arn:aws:rds:eu-west-3:418484240945:snapshot:golden-snapshot-20260305-postgres-18
 
     if res_snapshot_desc and res_snapshot_desc.get("DBSnapshots") and len(res_snapshot_desc["DBSnapshots"]):
         snapshot_creation_date = res_snapshot_desc["DBSnapshots"][0]["SnapshotCreateTime"]
