@@ -14,13 +14,10 @@ date_drifting_table_column = {
     "customers": [
         "inserted_at",
         "updated_at" ],
-    "devices": [ # Doc type : device -> devices
+    "devices": [
         "last_comm_date" ],
-    # "entities": [
-    #     "begin",
-    #     "End" ], # columns does not exist
-    "entity_availabilities": [ # typo : entities_availabilities => entity_availabilities
-        "end", # End => end
+    "entity_availabilities": [
+        "end",
         "begin" ],
     "installation_device_maps": [
         "end",
@@ -216,56 +213,105 @@ def _restore_overlapping_constraints(conn):
         print(f"Error disabling constraints for updates : {e}")
 
 
+def get_or_create_correlation_id_from_param_store(first: bool = False):
+    ephemeral_id_param_name ="/opac/int/step_function/ephemeral_id"
+
+    try:
+        correlation_id = ssm.get_parameter(Name=ephemeral_id_param_name, WithDecryption=True)
+        print(f"correlation_id => {correlation_id}")
+
+        if first:
+            print("Another drifting/anonymisation process is running => return None and should exit !!")
+            return None
+
+        return correlation_id
+    except ssm.exceptions.ParameterNotFound as e:
+        if not first:
+            print("This parameter /opac/int/step_function/ephemeral_id should exist => return None")
+            return None
+        else:
+            print(f"correlation_id not found => create /opac/int/step_function/ephemeral_id !!!")
+
+            execution_name = os.environ.get("EXECUTION_NAME", None)
+
+            if execution_name:
+                ssm.put_parameter(
+                    Name=ephemeral_id_param_name,
+                    Value=execution_name,
+                    Type='String',  # Ou 'SecureString' pour des données sensibles
+                    Overwrite=False
+                )
+
+                return execution_name
+            else:
+                print("EXECUTION_NAME not found => return None")
+                return None
+
+
 def apply_date_drifting(event, context):
-    conn = _get_ephemeral_db_connection(event["ephemeral_id"])
+    snapshot_arn = os.environ.get("SNAPSHOT_ARN", None)
+
+    if snapshot_arn is None:
+        print("SNAPSHOT_ARN is not set !!!")
+        return False
+    else:
+        print(f"Apply date drifting to ephemeral RDS instance (from snapshot {snapshot_arn})... ", end='')
+        print("[DONE]")
+
+    # conn = _get_ephemeral_db_connection(event["ephemeral_id"])
 
     # retrieve db snapshot creation time
-    res_snapshot_desc = rds.describe_db_snapshots(DBInstanceIdentifier="opk-opac-int-rds",
-                                                  DBSnapshotIdentifier=event["golden_snapshot_id"]) # TODO use arn arn:aws:rds:eu-west-3:418484240945:snapshot:golden-snapshot-20260305-postgres-18
+    # res_snapshot_desc = rds.describe_db_snapshots(DBSnapshotIdentifier=event["golden_snapshot_id"]) # TODO use arn arn:aws:rds:eu-west-3:418484240945:snapshot:golden-snapshot-20260305-postgres-18
+    res_snapshot_desc = rds.describe_db_snapshots(DBSnapshotIdentifier="arn:aws:rds:eu-west-3:418484240945:snapshot:golden-snapshot-20260305-postgres-18") # TODO use arn arn:aws:rds:eu-west-3:418484240945:snapshot:golden-snapshot-20260305-postgres-18
 
     if res_snapshot_desc and res_snapshot_desc.get("DBSnapshots") and len(res_snapshot_desc["DBSnapshots"]):
         snapshot_creation_date = res_snapshot_desc["DBSnapshots"][0]["SnapshotCreateTime"]
     else:
         raise Exception("Can't retrieve snapshot creation date.")
-
-    utc_now = datetime.now(timezone.utc)
-
-    delta = utc_now - snapshot_creation_date
-
-    _remove_overlapping_constraints(conn)
-    conn.commit()
-
-    for drift_elements in date_drifting_table_column.items():
-        table = drift_elements[0]
-        columns = drift_elements[1]
-
-        for column in columns:
-            print(f"updating {table} {column} to snapshot creation date + {delta.days} days.")
-            sql_update = f"UPDATE \"{table}\" SET \"{column}\" = \"{column}\" + INTERVAL '{delta.days} days' WHERE \"{column}\" is not null"
-            print(f"sql query => {sql_update}")
-
-            try:
-                with conn.cursor() as c:
-                    c.execute(sql_update)
-                    updated_row_count = c.rowcount
-                    print(f"Updated row count => {updated_row_count} for table {table} and column {column}")
-
-            except (Exception, psycopg2.DatabaseError) as e:
-                print(f"Error updating {table} {column}: {e}")
-
-        conn.commit()
-
-    _restore_overlapping_constraints(conn)
-    conn.commit()
+    #
+    # utc_now = datetime.now(timezone.utc)
+    #
+    # delta = utc_now - snapshot_creation_date
+    #
+    # _remove_overlapping_constraints(conn)
+    # conn.commit()
+    #
+    # for drift_elements in date_drifting_table_column.items():
+    #     table = drift_elements[0]
+    #     columns = drift_elements[1]
+    #
+    #     for column in columns:
+    #         print(f"updating {table} {column} to snapshot creation date + {delta.days} days.")
+    #         sql_update = f"UPDATE \"{table}\" SET \"{column}\" = \"{column}\" + INTERVAL '{delta.days} days' WHERE \"{column}\" is not null"
+    #         print(f"sql query => {sql_update}")
+    #
+    #         try:
+    #             with conn.cursor() as c:
+    #                 c.execute(sql_update)
+    #                 updated_row_count = c.rowcount
+    #                 print(f"Updated row count => {updated_row_count} for table {table} and column {column}")
+    #
+    #         except (Exception, psycopg2.DatabaseError) as e:
+    #             print(f"Error updating {table} {column}: {e}")
+    #
+    #     conn.commit()
+    #
+    # _restore_overlapping_constraints(conn)
+    # conn.commit()
     pass
 
 
 if __name__ == '__main__':
+
+    correlation_id = get_or_create_correlation_id_from_param_store(True)
+
     create_event_to_send = { "target_env_name": "test2", "source_env_name": "int",
                              "golden_snapshot_id": "golden-snapshot-20260305",
                              "ephemeral_id_prefix": "ephemeral-transform" }
 
-    res_create_ephemeral = create_ephemeral_instance_from_snapshot(event=create_event_to_send, context=None, create_rds_instance=False)
+    res_create_ephemeral = create_ephemeral_instance_from_snapshot(event=create_event_to_send,
+                                                                   context=None,
+                                                                   create_rds_instance=False)
 
     res_wait = wait_for_available_instance(res_create_ephemeral, None)
 

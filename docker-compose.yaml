@@ -1,0 +1,18 @@
+---
+services:
+  step-anonymisation:
+    image: step-anonymisation
+    container_name: step-anonymisation
+    volumes:
+      - ${HOME}/.aws:/home/nonroot/.aws
+#    environment:
+#      AWS_PROFILE: "onepark-nonprod"
+#      AWS_REGION: "eu-west-3"
+#      DB_SSLMODE: "verify-full"
+#      DB_SSLROOTCERTS: "/home/nonroot/.aws/rds-certs/global-bundle.pem"
+#      PYTHONUNBUFFERED: 1
+#      SNAPSHOT_DB_NAME: "opac"
+#      SNAPSHOT_DB_USERNAME: "dn3F7cBSgMSCZWub"
+#      SNAPSHOT_DB_PASSWORD: "SNva7tMhnVtPiQnW4x"
+#      SNAPSHOT_DB_PORT: 5432
+    network_mode: host

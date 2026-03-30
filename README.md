@@ -1,6 +1,31 @@
 # opac-devops
 
-## local dev
+## Lcal Dev
+
+### Push a docker image to ECR
+
+First, Authenticate to the shared account's ECR :  
+
+```
+aws ecr get-login-password --region eu-west-3 \
+  | docker login \
+      --username AWS \
+      --password-stdin \
+      <account_id>.dkr.ecr.eu-west-3.amazonaws.com
+```
+
+Then tag the image you want to push (for instance `step-drifting`)  
+
+# 2. Tag your image
+```
+docker tag step-drifting:latest \
+  <account_id>.dkr.ecr.eu-west-3.amazonaws.com/my-repo:tag
+```
+
+And then push to ECR:
+```
+docker push 884080474326.dkr.ecr.eu-west-3.amazonaws.com/my-repo:tag
+```
 
 ### modify hosts file
 Because we use a ssm session to tunnel to PostgresSQL, we need to change the `hosts` file adding the line (for instance):
@@ -13,7 +38,9 @@ With this, psql can point to localhost and go through the ssm sesion to the EC2 
 
 ### Postgres SQL SSL mode
 Download pem file for full ssl verification
-``` ```
+```
+curl -o ~/rds-certs/global-bundle.pem https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
+```
 
 ### sso login 
 ```aws sso login --profile onepark-nonprod```
