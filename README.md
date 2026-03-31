@@ -20,9 +20,11 @@ Save your input to a file named input.json:
     "snapshotDbPort": 5432,
     "targetRdsInstanceId": "target-instance-test",
     "anonymisation": false,
-    "drifting": false
+    "drifting": true
 }
 ```
+
+NB: in this example, we ask for no anonymisation but we ask for date drifting 
 
 Run the command referencing that file:
 
@@ -51,6 +53,8 @@ aws stepfunctions start-execution \
 "drifting": false
 }'
 ```
+
+NB: in this example, we ask for both, anonymisation and date drifting
 
 ## Local Dev
 
