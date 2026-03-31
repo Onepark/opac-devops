@@ -1,7 +1,10 @@
 import os
 import boto3
-from datetime import datetime, timezone
 import psycopg2
+
+from utils.context import get_or_create_context_from_param_store
+from utils.rds import get_ephemeral_db_connection
+
 
 # this dictionary list all the columns by table where apply anonymisation
 anonymisation_table_columns = {
@@ -54,114 +57,48 @@ REGION = os.environ['AWS_REGION']
 rds = boto3.client(service_name="rds")
 ssm = boto3.client(service_name="ssm")
 
-waiter_available = rds.get_waiter("db_instance_available")
-waiter_deleted = rds.get_waiter('db_instance_deleted')
+def create_pgcrypto_extension(conn):
+    # Enable pgcrypto extension in ephemeral instance
+    with conn.cursor() as c:
+        c.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto;")
 
-def _get_ephemeral_db_connection(ephemeral_host: str):
-    # password are available through env variables :
+def apply_anonymisation(state_machine_context):
+    if not state_machine_context.get("anonymisation", False):
+        print("anonymisation=False => No anonymisation to apply.")
+        return
 
-    # for instance:
-    # SNAPSHOT_DB_PASSWORD=test
-    # SNAPSHOT_DB_USERNAME=test
-    # SNAPSHOT_DB_NAME=test
-    # SNAPSHOT_DB_PORT=5432
-    # SSLROOTCERTS=~/.aws/rds-certs/global-bundle.pem (when lambda is run directly from local machine)
+    conn = get_ephemeral_db_connection(rds, state_machine_context)
 
-    db_password = os.environ['SNAPSHOT_DB_PASSWORD']
-    db_username = os.environ['SNAPSHOT_DB_USERNAME']
-    db_name = os.environ['SNAPSHOT_DB_NAME']
-    db_port = os.environ['SNAPSHOT_DB_PORT']
-    db_sslrootcerts = os.environ.get('DB_SSLROOTCERTS', None)
-    db_sslmode = os.environ.get('DB_SSLMODE', None)
+    create_pgcrypto_extension(conn)
 
-    print(f"db_username : {db_username}")
-    print(f"db_password : *****")
-    print(f"db_name : {db_name}")
-    print(f"db_port : {db_port}")
-    print(f"db_sslrootcerts : {db_sslrootcerts}")
-    print(f"db_sslmode : {db_sslmode}")
+    for anon_elements in anonymisation_table_columns.items():
+        table = anon_elements[0]
+        set_clause_list = anon_elements[1]
 
-    try:
-        conn = psycopg2.connect(
-            host=ephemeral_host,
-            port=db_port,
-            database=db_name,
-            user=db_username,
-            password=db_password,
-            sslmode=db_sslmode,
-            sslrootcert=db_sslrootcerts,
+        for set_clause in set_clause_list:
+            update_query = f"UPDATE {table} {set_clause}"
 
-        )
+            print(f"Anonymisation of table {table} ... ", end='')
 
-        conn.set_client_encoding('UTF8')
+            try:
+                with conn.cursor() as c:
+                    c.execute(update_query)
+                    updated_row_count = c.rowcount
+                    print(f"OK [{updated_row_count}]")
 
-        cur = conn.cursor()
-        cur.execute('SELECT version();')
-        print(cur.fetchone()[0])
-        cur.close()
-    except Exception as e:
-        print(f"Database error: {e}")
-        raise
+            except (Exception, psycopg2.DatabaseError) as e:
+                print(f"FAILED [Error on {table} => {set_clause}: {e}]")
 
-    return conn
+            conn.commit()
 
-
-def apply_anonymisation(event, context):
-    snapshot_arn = os.environ.get("SNAPSHOT_ARN", None)
-    execution_arn = os.environ.get("EXECUTION_ARN", None)
-    execution_name = os.environ.get("EXECUTION_NAME", None)
-
-    if not execution_arn:
-        print("EXECUTION_ARN is not set !!!")
-    else:
-        print(f"EXECUTION_ARN found : {execution_arn}")
-
-    if not execution_name:
-        print("EXECUTION_NAME is not set !!!")
-    else:
-        print(f"EXECUTION_NAME found : {execution_name}")
-
-    if snapshot_arn is None:
-        print("SNAPSHOT_ARN is not set !!!")
-    else:
-        print(f"Apply anonymisation to ephemeral RDS instance (from snapshot {snapshot_arn})... ", end='')
-        print("[DONE]")
-    return True
-
-    # conn = _get_ephemeral_db_connection(event["ephemeral_host"])
-    #
-    # for anon_elements in anonymisation_table_columns.items():
-    #     table = anon_elements[0]
-    #     set_clause_list = anon_elements[1]
-    #
-    #     for set_clause in set_clause_list:
-    #         update_query = f"UPDATE {table} {set_clause}"
-    #
-    #         print(f"Anonymisation of table {table} ... ", end='')
-    #
-    #         try:
-    #             with conn.cursor() as c:
-    #                 c.execute(update_query)
-    #                 updated_row_count = c.rowcount
-    #                 print(f"OK [{updated_row_count}]")
-    #
-    #         except (Exception, psycopg2.DatabaseError) as e:
-    #             print(f"FAILED [Error on {table} => {set_clause}: {e}]")
-    #
-    #         conn.commit()
-    #
-    # conn.commit()
+    conn.commit()
 
 
 if __name__ == '__main__':
-    anonymize_event_to_send = { "target_env_name": "test2", "source_env_name": "int",
-                                "golden_snapshot_id": "golden-snapshot-20260305",
-                                "ephemeral_host": "ephemeral-transform-golden-snapshot-20260305-test2.c3k4uoc6kifg.eu-west-3.rds.amazonaws.com" }
-    #
-    # res_create_ephemeral = create_ephemeral_instance_from_snapshot(event=create_event_to_send, context=None, create_rds_instance=False)
-    #
-    # res_wait = wait_for_available_instance(res_create_ephemeral, None)
+    # retrieve the context from previous step function (from parameter store)
+    context = get_or_create_context_from_param_store(ssm)
 
-    apply_anonymisation(anonymize_event_to_send, None)
+    # Apply anonymisation if requested (anonymisation=True in state_machine_context)
+    apply_anonymisation(state_machine_context=context)
 
     pass

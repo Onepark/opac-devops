@@ -3,6 +3,12 @@ import boto3
 from datetime import datetime, timezone
 import psycopg2
 
+from utils.context import get_or_create_context_from_param_store, update_context_in_param_store
+from utils.rds import wait_for_available_instance, get_ephemeral_db_connection
+
+# prefix for creation of the ephemeral RDS instance
+ephemeral_id_prefix = "ephemeral-transform"
+
 # this dictionary list all the columns by table where apply date drifting
 # if begin or end in the same table, because of check constraint, end is always updated first
 date_drifting_table_column = {
@@ -82,44 +88,24 @@ REGION = os.environ['AWS_REGION']
 rds = boto3.client(service_name="rds")
 ssm = boto3.client(service_name="ssm")
 
-waiter_available = rds.get_waiter("db_instance_available")
-waiter_deleted = rds.get_waiter('db_instance_deleted')
+def create_ephemeral_instance_from_snapshot(state_machine_context, create_rds_instance=True):
+    target_rds_instance_id = state_machine_context["targetRdsInstanceId"]
 
-def wait_for_available_instance(event, context):
-    """Generic poller — reused for ephemeral and final instance readiness."""
-    identifier = event.get("check_identifier") or event["ephemeral_id"]
+    # retrieve db snapshot description
+    res_snapshot_desc = rds.describe_db_snapshots(DBSnapshotIdentifier=state_machine_context["snapshotArn"])
 
-    waiter_available.wait(
-        DBInstanceIdentifier=identifier,
-        WaiterConfig={
-            "Delay": 10,
-            "MaxAttempts": 60
-        }
-    )
+    if res_snapshot_desc and res_snapshot_desc.get("DBSnapshots") and len(res_snapshot_desc["DBSnapshots"]):
+        snapshot_creation_date = res_snapshot_desc["DBSnapshots"][0]["SnapshotCreateTime"]
+        state_machine_context["snapshotCreationDate"] = snapshot_creation_date.isoformat()
+    else:
+        raise Exception("Can't retrieve snapshot creation date.")
 
-    instance = rds.describe_db_instances(
-        DBInstanceIdentifier=identifier
-    )["DBInstances"][0]
+    golden_snapshot_id = res_snapshot_desc["DBSnapshots"][0]["DBSnapshotIdentifier"]
+    ephemeral_id = f"{ephemeral_id_prefix}-{target_rds_instance_id}"
 
-    return {
-        **event,
-        "db_status": instance["DBInstanceStatus"],
-        "db_host":   instance["Endpoint"]["Address"],
-        "is_available": instance["DBInstanceStatus"] == "available",
-    }
+    state_machine_context["ephemeralRdsInstanceId"] = ephemeral_id
 
-def create_ephemeral_instance_from_snapshot(event, context, create_rds_instance=True):
-    target_env_name = event["target_env_name"]
-    source_env_name = None
-    rds_target_db_instance_class = None
-    rds_target_db_subnet_group = None
-    rds_target_vpc_security_groups = None
-
-
-    golden_snapshot_id = event["golden_snapshot_id"]
-    ephemeral_id = f"{event['ephemeral_id_prefix']}-{golden_snapshot_id}-{target_env_name}"
-
-    existing = rds.describe_db_instances(DBInstanceIdentifier="opk-opac-int-rds", )["DBInstances"][0]
+    existing = rds.describe_db_instances(DBInstanceIdentifier=target_rds_instance_id, )["DBInstances"][0]
 
     creation_response = None
 
@@ -137,56 +123,12 @@ def create_ephemeral_instance_from_snapshot(event, context, create_rds_instance=
             Tags=[{"Key": "ephemeral", "Value": "true"}],
         )
 
+    update_context_in_param_store(ssm, state_machine_context)
+
     if creation_response:
-        return {**event, "ephemeral_id": ephemeral_id, **creation_response}
+        return {"ephemeral_id": ephemeral_id, **creation_response}
     else:
-        return {**event, "ephemeral_id": ephemeral_id}
-
-def _get_ephemeral_db_connection(ephemeral_id: str):
-    # password, username and database name are identical to int db (comes from snapshot) and
-    # are available through env variables :
-
-    # for instance:
-    # SNAPSHOT_DB_PASSWORD=test
-    # SNAPSHOT_DB_USERNAME=test
-    # SNAPSHOT_DB_NAME=test
-    # SNAPSHOT_DB_PORT=5432
-    # SSLROOTCERTS=~/.aws/rds-certs/global-bundle.pem (when lambda is run directly from local machine)
-
-    db_password = os.environ['SNAPSHOT_DB_PASSWORD']
-    db_username = os.environ['SNAPSHOT_DB_USERNAME']
-    db_name = os.environ['SNAPSHOT_DB_NAME']
-    db_port = os.environ['SNAPSHOT_DB_PORT']
-    db_sslrootcerts = os.environ['DB_SSLROOTCERTS']
-    db_sslmode = os.environ['DB_SSLMODE']
-
-    existing_ephemeral_db = rds.describe_db_instances(DBInstanceIdentifier=ephemeral_id)["DBInstances"][0]
-
-    host = None
-
-    # retrieve ephemeral instance host
-    if existing_ephemeral_db.get("Endpoint") and existing_ephemeral_db["Endpoint"].get("Address"):
-        host = existing_ephemeral_db["Endpoint"]["Address"]
-
-    try:
-        conn = psycopg2.connect(
-            host=host,
-            port=db_port,
-            database=db_name,
-            user=db_username,
-            password=db_password,
-            sslmode=db_sslmode,
-            sslrootcert=db_sslrootcerts
-        )
-        cur = conn.cursor()
-        cur.execute('SELECT version();')
-        print(cur.fetchone()[0])
-        cur.close()
-    except Exception as e:
-        print(f"Database error: {e}")
-        raise
-
-    return conn
+        return {"ephemeral_id": ephemeral_id}
 
 
 def _remove_overlapping_constraints(conn):
@@ -203,120 +145,73 @@ def _remove_overlapping_constraints(conn):
 
 
 def _restore_overlapping_constraints(conn):
-    # TODO this function should take the same list as _remove_overlapping_constraints function in order to restore the same list of non-overlapping constraints
     try:
-        print("Remove overlapping constraints for updates ... ")
+        print("Restore overlapping constraints for updates ... ")
         with conn.cursor() as constraint_cursor:
             constraint_cursor.execute("ALTER TABLE entity_availabilities ADD constraint entity_availabilities_overlap_constraint exclude using gist (entity_id with =, parking_category_id with =, type with =, tsrange(\"begin\", \"end\", '[)'::text) with &&);")
-            print("Overlapping constraints for updates removed !")
+            print("Overlapping constraints for updates restored !")
     except (Exception, psycopg2.DatabaseError) as e:
-        print(f"Error disabling constraints for updates : {e}")
+        print(f"Error restoring constraints for updates : {e}")
 
 
-def get_or_create_context_from_param_store(first: bool = False):
-    context_param_name ="/opac/int/step_function/context"
+def apply_date_drifting(state_machine_context: dict):
+    if not state_machine_context.get("drifting", False):
+        print("drifting=False => No date drifting to apply.")
+        return
 
-    try:
-        state_machine_context = ssm.get_parameter(Name=context_param_name, WithDecryption=True)
-        print(f"context => {state_machine_context}")
+    conn = get_ephemeral_db_connection(rds, state_machine_context)
 
-        if first:
-            print("Another drifting/anonymisation process is running => return None and should exit !!")
-            return None
+    utc_now = datetime.now(timezone.utc)
 
-        return state_machine_context
-    except ssm.exceptions.ParameterNotFound as e:
-        if not first:
-            print("This parameter /opac/int/step_function/context should exist => return None")
-            return None
-        else:
-            print(f"context not found => create /opac/int/step_function/context !!!")
+    snapshot_creation_date = datetime.fromisoformat(state_machine_context['snapshotCreationDate'])
 
-            execution_name = os.environ.get("EXECUTION_NAME", None)
+    delta = utc_now - snapshot_creation_date
 
-            if execution_name:
-                ssm.put_parameter(
-                    Name=context_param_name,
-                    Value=execution_name,
-                    Type='String',  # Ou 'SecureString' pour des données sensibles
-                    Overwrite=False
-                )
+    _remove_overlapping_constraints(conn)
+    conn.commit()
 
-                return execution_name
-            else:
-                print("EXECUTION_NAME not found => return None")
-                return None
+    for drift_elements in date_drifting_table_column.items():
+        table = drift_elements[0]
+        columns = drift_elements[1]
 
+        for column in columns:
+            print(f"updating {table} {column} to snapshot creation date + {delta.days} days.")
+            sql_update = f"UPDATE \"{table}\" SET \"{column}\" = \"{column}\" + INTERVAL '{delta.days} days' WHERE \"{column}\" is not null"
+            print(f"sql query => {sql_update}")
 
-def retrieve_snapshot_arn_and_update_context(context: dict) -> dict:
-    snapshot_arn = os.environ.get("SNAPSHOT_ARN", None)
+            try:
+                with conn.cursor() as c:
+                    c.execute(sql_update)
+                    updated_row_count = c.rowcount
+                    print(f"Updated row count => {updated_row_count} for table {table} and column {column}")
 
-    if snapshot_arn is None:
-        print("SNAPSHOT_ARN is not set !!! => context NOT updated !!!")
-    else:
-        context["snapshotArn"] = snapshot_arn
-        print(f"Snapshot arn found in env variable SNAPSHOT_ARN: {snapshot_arn} => context updated.")
+            except (Exception, psycopg2.DatabaseError) as e:
+                print(f"Error updating {table} {column}: {e}")
 
-    return context
+        conn.commit()
 
-def apply_date_drifting(event, context):
-    # conn = _get_ephemeral_db_connection(event["ephemeral_id"])
-
-    # retrieve db snapshot creation time
-    # res_snapshot_desc = rds.describe_db_snapshots(DBSnapshotIdentifier=event["golden_snapshot_id"]) # TODO use arn arn:aws:rds:eu-west-3:418484240945:snapshot:golden-snapshot-20260305-postgres-18
-    res_snapshot_desc = rds.describe_db_snapshots(DBSnapshotIdentifier="arn:aws:rds:eu-west-3:418484240945:snapshot:golden-snapshot-20260305-postgres-18") # TODO use arn arn:aws:rds:eu-west-3:418484240945:snapshot:golden-snapshot-20260305-postgres-18
-
-    if res_snapshot_desc and res_snapshot_desc.get("DBSnapshots") and len(res_snapshot_desc["DBSnapshots"]):
-        snapshot_creation_date = res_snapshot_desc["DBSnapshots"][0]["SnapshotCreateTime"]
-    else:
-        raise Exception("Can't retrieve snapshot creation date.")
-    #
-    # utc_now = datetime.now(timezone.utc)
-    #
-    # delta = utc_now - snapshot_creation_date
-    #
-    # _remove_overlapping_constraints(conn)
-    # conn.commit()
-    #
-    # for drift_elements in date_drifting_table_column.items():
-    #     table = drift_elements[0]
-    #     columns = drift_elements[1]
-    #
-    #     for column in columns:
-    #         print(f"updating {table} {column} to snapshot creation date + {delta.days} days.")
-    #         sql_update = f"UPDATE \"{table}\" SET \"{column}\" = \"{column}\" + INTERVAL '{delta.days} days' WHERE \"{column}\" is not null"
-    #         print(f"sql query => {sql_update}")
-    #
-    #         try:
-    #             with conn.cursor() as c:
-    #                 c.execute(sql_update)
-    #                 updated_row_count = c.rowcount
-    #                 print(f"Updated row count => {updated_row_count} for table {table} and column {column}")
-    #
-    #         except (Exception, psycopg2.DatabaseError) as e:
-    #             print(f"Error updating {table} {column}: {e}")
-    #
-    #     conn.commit()
-    #
-    # _restore_overlapping_constraints(conn)
-    # conn.commit()
-    pass
+    _restore_overlapping_constraints(conn)
+    conn.commit()
 
 
 if __name__ == '__main__':
 
-    context = get_or_create_context_from_param_store(True)
+    # create the context from step function input (CONTEXT_JSON env variable) and
+    # store this json in AWS Parameter Store as a Secure String
+    context = get_or_create_context_from_param_store(ssm, True)
 
-    create_event_to_send = { "target_env_name": "test2", "source_env_name": "int",
-                             "golden_snapshot_id": "golden-snapshot-20260305",
-                             "ephemeral_id_prefix": "ephemeral-transform" }
+    if context and "error" in context:
+        print("WARNING: A drifting/anonymisation process is currently in progress, exiting.")
+        exit(0)
 
-    res_create_ephemeral = create_ephemeral_instance_from_snapshot(event=create_event_to_send,
-                                                                   context=None,
-                                                                   create_rds_instance=False)
+    # Create the ephemeral instance that will be used for drifting and anonymisation
+    # NB: state machine context is enriched with
+    #       - state_machine_context["snapshotCreationDate"] : date of snapshot creation (isoformat string)
+    #       - state_machine_context["ephemeralRdsInstanceId"] : identifier of the ephemeral RDS instance
+    create_ephemeral_instance_from_snapshot(state_machine_context=context,
+                                            create_rds_instance=context.get("_debug_create_rds_instance", True))
+    # Wait for the instance to be available
+    wait_for_available_instance(rds, state_machine_context=context)
 
-    res_wait = wait_for_available_instance(res_create_ephemeral, None)
-
-    apply_date_drifting(res_create_ephemeral, None)
-
-    pass
+    # Apply date drifting on the ephemeral RDS instance
+    apply_date_drifting(state_machine_context=context)
