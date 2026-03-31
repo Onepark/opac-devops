@@ -1,6 +1,58 @@
 # opac-devops
 
-## Lcal Dev
+## Run the AWS Step Functions
+To run your AWS Step Function from the CLI, you use the `start-execution` command. Because the input 
+is a complex JSON object, the most reliable way to handle it is by saving it to a temporary file or 
+properly escaping the JSON string.
+
+### Option 1: Using a JSON File 
+This is the cleanest method to avoid shell escaping errors with special characters or long strings.
+
+Save your input to a file named input.json:
+
+```json
+{
+    "comment": "inputs for state machine flow. It will be used as 'state' between step functions",
+    "snapshotArn": "arn:aws:rds:eu-west-3:418484240945:snapshot:golden-snapshot-20260305-postgres-18",
+    "snapshotDbName": "opac",
+    "snapshotDbUsername": "<db_snapshot_username>",
+    "snapshotDbPassword": "<db_snapshot_password>",
+    "snapshotDbPort": 5432,
+    "targetRdsInstanceId": "target-instance-test",
+    "anonymisation": false,
+    "drifting": false
+}
+```
+
+Run the command referencing that file:
+
+```shell
+aws stepfunctions start-execution \
+--state-machine-arn "arn:aws:states:eu-west-3:418484240945:stateMachine:drift-anonymisation-state-machine" \
+--input file://input.json
+```
+
+### Option 2: Inline String (Bash/Zsh)
+If one prefers not to create a file, you can pass the JSON as a single-quoted string. 
+Note that you must ensure any internal quotes are handled correctly.
+
+```shell
+aws stepfunctions start-execution \
+--state-machine-arn "arn:aws:states:eu-west-3:418484240945:stateMachine:drift-anonymisation-state-machine" \
+--input '{
+"comment": "inputs for state machine flow",
+"snapshotArn": "arn:aws:rds:eu-west-3:418484240945:snapshot:golden-snapshot-20260305-postgres-18",
+"snapshotDbName": "opac",
+"snapshotDbUsername": "<db_snapshot_username>",
+"snapshotDbPassword": "<db_snapshot_password>",
+"snapshotDbPort": 5432,
+"targetRdsInstanceId": "target-instance-test",
+"anonymisation": false,
+"drifting": false
+}'
+```
+
+## Local Dev
 
 ### Push a docker image to ECR
 
