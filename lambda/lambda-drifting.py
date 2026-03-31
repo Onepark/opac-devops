@@ -213,30 +213,30 @@ def _restore_overlapping_constraints(conn):
         print(f"Error disabling constraints for updates : {e}")
 
 
-def get_or_create_correlation_id_from_param_store(first: bool = False):
-    ephemeral_id_param_name ="/opac/int/step_function/ephemeral_id"
+def get_or_create_context_from_param_store(first: bool = False):
+    context_param_name ="/opac/int/step_function/context"
 
     try:
-        correlation_id = ssm.get_parameter(Name=ephemeral_id_param_name, WithDecryption=True)
-        print(f"correlation_id => {correlation_id}")
+        state_machine_context = ssm.get_parameter(Name=context_param_name, WithDecryption=True)
+        print(f"context => {state_machine_context}")
 
         if first:
             print("Another drifting/anonymisation process is running => return None and should exit !!")
             return None
 
-        return correlation_id
+        return state_machine_context
     except ssm.exceptions.ParameterNotFound as e:
         if not first:
-            print("This parameter /opac/int/step_function/ephemeral_id should exist => return None")
+            print("This parameter /opac/int/step_function/context should exist => return None")
             return None
         else:
-            print(f"correlation_id not found => create /opac/int/step_function/ephemeral_id !!!")
+            print(f"context not found => create /opac/int/step_function/context !!!")
 
             execution_name = os.environ.get("EXECUTION_NAME", None)
 
             if execution_name:
                 ssm.put_parameter(
-                    Name=ephemeral_id_param_name,
+                    Name=context_param_name,
                     Value=execution_name,
                     Type='String',  # Ou 'SecureString' pour des données sensibles
                     Overwrite=False
@@ -248,16 +248,18 @@ def get_or_create_correlation_id_from_param_store(first: bool = False):
                 return None
 
 
-def apply_date_drifting(event, context):
+def retrieve_snapshot_arn_and_update_context(context: dict) -> dict:
     snapshot_arn = os.environ.get("SNAPSHOT_ARN", None)
 
     if snapshot_arn is None:
-        print("SNAPSHOT_ARN is not set !!!")
-        return False
+        print("SNAPSHOT_ARN is not set !!! => context NOT updated !!!")
     else:
-        print(f"Apply date drifting to ephemeral RDS instance (from snapshot {snapshot_arn})... ", end='')
-        print("[DONE]")
+        context["snapshotArn"] = snapshot_arn
+        print(f"Snapshot arn found in env variable SNAPSHOT_ARN: {snapshot_arn} => context updated.")
 
+    return context
+
+def apply_date_drifting(event, context):
     # conn = _get_ephemeral_db_connection(event["ephemeral_id"])
 
     # retrieve db snapshot creation time
@@ -303,7 +305,7 @@ def apply_date_drifting(event, context):
 
 if __name__ == '__main__':
 
-    correlation_id = get_or_create_correlation_id_from_param_store(True)
+    context = get_or_create_context_from_param_store(True)
 
     create_event_to_send = { "target_env_name": "test2", "source_env_name": "int",
                              "golden_snapshot_id": "golden-snapshot-20260305",
