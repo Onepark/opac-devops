@@ -49,12 +49,27 @@ aws stepfunctions start-execution \
 "snapshotDbPassword": "<db_snapshot_password>",
 "snapshotDbPort": 5432,
 "targetRdsInstanceId": "target-instance-test",
-"anonymisation": false,
-"drifting": false
+"anonymisation": true,
+"drifting": true
 }'
 ```
 
 NB: in this example, we ask for both, anonymisation and date drifting
+
+### State Machine context / Parameter Store
+
+The state machine "state"/"context" is saved in Parameter Store (parameter name: `/opac/int/step_function/context`) 
+during the whole workflow of the State Machine. 
+It allows to pass the state between tasks like the ephemeral RDS instance id for instance. 
+It is deleted in the end of the sequence of tasks.
+
+NB: if two steps functions are triggered at the same time then the presence of this parameter in the 
+Parameter Store will make one of the step function stop with a message (in the ECS logs of the task) : 
+
+```WARNING: A drifting/anonymisation process is currently in progress, exiting.```
+
+This mechanism enforces singleton execution, ensuring that no more than one state machine instance is 
+active at any given time.
 
 ## Local Dev
 
