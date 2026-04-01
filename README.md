@@ -71,7 +71,6 @@ Parameter Store will make one of the step function stop with a message (in the E
 This mechanism enforces singleton execution, ensuring that no more than one state machine instance is 
 active at any given time.
 
-
 ### Step Function ASL
 
 ```json
@@ -262,6 +261,7 @@ anonymisation step after. A good practice is too run it with (in CONTEXT_JSON) `
 work with anonymisation or rename dance process.
 
 ## Misc
+
 ### create a token for an RDS instance
 ```export AUTH_TOKEN=$(aws rds generate-db-auth-token --hostname db-test2.c4k4uoc9kxxx.eu-west-3.rds.amazonaws.com --username <master-username> --port 5432)```
 
