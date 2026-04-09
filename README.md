@@ -56,6 +56,7 @@ All parameters can be passed as flags or filled in interactively:
 | `--anonymisation` / `--no-anonymisation` | prompted | Enable data anonymisation |
 | `--drifting` / `--no-drifting` | prompted | Enable date drifting |
 | `--watch` / `--no-watch` | `--watch` | Stream execution progress after triggering |
+| `--debug` | `false` | Also stream ECS task CloudWatch logs in real time (implies `--watch`) |
 | `--dry-run` | `false` | Print the payload without triggering |
 
 **Examples**

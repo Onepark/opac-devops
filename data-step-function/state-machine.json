@@ -31,9 +31,10 @@
           "AwsvpcConfiguration": {
             "Subnets": ["subnet-08ff82d84df0352d0", "subnet-08dc62b993be26d9b"],
             "SecurityGroups": [
-              "sg-03b93b8d540e47c8b",
-              "sg-0c17036dd7386fb96",
-              "sg-08e0a1b7df3e00049"
+              "sg-0a2a4492eca88f57f",
+              "sg-01723ee39c2d30eea",
+              "sg-063ddea6a10a068c9",
+              "sg-075fb46fb5b598f22"
             ],
             "AssignPublicIp": "DISABLED"
           }
@@ -75,9 +76,10 @@
           "AwsvpcConfiguration": {
             "Subnets": ["subnet-08ff82d84df0352d0", "subnet-08dc62b993be26d9b"],
             "SecurityGroups": [
-              "sg-03b93b8d540e47c8b",
-              "sg-0c17036dd7386fb96",
-              "sg-08e0a1b7df3e00049"
+              "sg-0a2a4492eca88f57f",
+              "sg-01723ee39c2d30eea",
+              "sg-063ddea6a10a068c9",
+              "sg-075fb46fb5b598f22"
             ],
             "AssignPublicIp": "DISABLED"
           }
@@ -119,9 +121,10 @@
           "AwsvpcConfiguration": {
             "Subnets": ["subnet-08ff82d84df0352d0", "subnet-08dc62b993be26d9b"],
             "SecurityGroups": [
-              "sg-03b93b8d540e47c8b",
-              "sg-0c17036dd7386fb96",
-              "sg-08e0a1b7df3e00049"
+              "sg-0a2a4492eca88f57f",
+              "sg-01723ee39c2d30eea",
+              "sg-063ddea6a10a068c9",
+              "sg-075fb46fb5b598f22"
             ],
             "AssignPublicIp": "DISABLED"
           }
@@ -159,9 +162,10 @@
           "AwsvpcConfiguration": {
             "Subnets": ["subnet-08ff82d84df0352d0", "subnet-08dc62b993be26d9b"],
             "SecurityGroups": [
-              "sg-03b93b8d540e47c8b",
-              "sg-0c17036dd7386fb96",
-              "sg-08e0a1b7df3e00049"
+              "sg-0a2a4492eca88f57f",
+              "sg-01723ee39c2d30eea",
+              "sg-063ddea6a10a068c9",
+              "sg-075fb46fb5b598f22"
             ],
             "AssignPublicIp": "DISABLED"
           }

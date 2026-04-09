@@ -14,7 +14,9 @@ from __future__ import annotations
 import json
 import signal
 import subprocess
+import threading
 import time
+from datetime import datetime, timezone
 from typing import Optional
 
 import boto3
@@ -34,6 +36,7 @@ STATE_MACHINE_ARN = (
     "arn:aws:states:eu-west-3:418484240945:stateMachine:"
     "drift-anonymisation-state-machine"
 )
+ECS_CLUSTER_ARN = "arn:aws:ecs:eu-west-3:418484240945:cluster/opk-opac-int-ecs-cluster"
 DOPPLER_PROJECT = "opac-data-step-function"
 SSM_CONTEXT_PARAM = "/opac/int/step_function/context"
 
@@ -92,6 +95,7 @@ def _select_rds_instance() -> str:
             inst
             for page in paginator.paginate()
             for inst in page["DBInstances"]
+            if any(k in inst["DBInstanceIdentifier"] for k in ("test", "stg"))
         ]
     except Exception as exc:
         console.print(f"[bold red]Error fetching RDS instances:[/bold red] {exc}")
@@ -126,6 +130,88 @@ def _select_rds_instance() -> str:
         choices=[str(i) for i in range(1, len(instances) + 1)],
     )
     return instances[int(choice) - 1]["DBInstanceIdentifier"]
+
+
+# ---------------------------------------------------------------------------
+# Debug: CloudWatch log tailing
+# ---------------------------------------------------------------------------
+
+
+def _get_ecs_log_streams(ecs_client, task_arn: str) -> list[dict]:
+    """Return CloudWatch log configs for each container in the ECS task."""
+    try:
+        tasks = ecs_client.describe_tasks(cluster=ECS_CLUSTER_ARN, tasks=[task_arn])["tasks"]
+        if not tasks:
+            return []
+        task_id = task_arn.split("/")[-1]
+        task_def = ecs_client.describe_task_definition(
+            taskDefinition=tasks[0]["taskDefinitionArn"]
+        )["taskDefinition"]
+        result = []
+        for c in task_def["containerDefinitions"]:
+            log_cfg = c.get("logConfiguration", {})
+            if log_cfg.get("logDriver") == "awslogs":
+                opts = log_cfg.get("options", {})
+                prefix = opts.get("awslogs-stream-prefix", "ecs")
+                result.append({
+                    "container": c["name"],
+                    "log_group": opts.get("awslogs-group", ""),
+                    "log_stream": f"{prefix}/{c['name']}/{task_id}",
+                })
+        return result
+    except Exception as exc:
+        console.print(f"[dim]  Could not resolve log streams: {exc}[/dim]")
+        return []
+
+
+def _tail_log_stream(
+    logs_client,
+    log_group: str,
+    log_stream: str,
+    container_name: str,
+    stop_event: threading.Event,
+) -> None:
+    """Tail a CloudWatch log stream in a background thread until stop_event is set."""
+    start_ms = int(time.time() * 1000)
+    next_token: str | None = None
+
+    while not stop_event.wait(timeout=2):
+        if next_token:
+            kwargs: dict = {
+                "logGroupName": log_group,
+                "logStreamName": log_stream,
+                "nextToken": next_token,
+            }
+        else:
+            kwargs = {
+                "logGroupName": log_group,
+                "logStreamName": log_stream,
+                "startFromHead": True,
+                "startTime": start_ms,
+            }
+        try:
+            resp = logs_client.get_log_events(**kwargs)
+            for ev in resp.get("events", []):
+                ts = datetime.fromtimestamp(ev["timestamp"] / 1000, tz=timezone.utc).strftime("%H:%M:%S")
+                msg = ev["message"].rstrip()
+                console.print(f"  [dim][{ts}][/dim] [cyan]{container_name}[/cyan] [dim]│[/dim] {msg}")
+            next_token = resp.get("nextForwardToken")
+        except Exception:
+            pass
+
+    # Drain any remaining events after the state exits
+    time.sleep(3)
+    if next_token:
+        try:
+            resp = logs_client.get_log_events(
+                logGroupName=log_group, logStreamName=log_stream, nextToken=next_token
+            )
+            for ev in resp.get("events", []):
+                ts = datetime.fromtimestamp(ev["timestamp"] / 1000, tz=timezone.utc).strftime("%H:%M:%S")
+                msg = ev["message"].rstrip()
+                console.print(f"  [dim][{ts}][/dim] [cyan]{container_name}[/cyan] [dim]│[/dim] {msg}")
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -187,11 +273,26 @@ def _try_cleanup_ssm(ssm_client) -> None:
         )
 
 
-def _watch_execution(sf_client, ssm_client, execution_arn: str, poll_interval: int = 30) -> None:
+def _watch_execution(
+    sf_client,
+    ssm_client,
+    execution_arn: str,
+    poll_interval: int = 30,
+    debug: bool = False,
+) -> None:
     """Poll execution history and print events until a terminal state is reached."""
     seen_ids: set[int] = set()
     start_time = time.monotonic()
     detached = False
+    current_state: str | None = None
+    # state_name -> list of (thread, stop_event)
+    active_tailers: dict[str, list[tuple[threading.Thread, threading.Event]]] = {}
+
+    if debug:
+        ecs_client = boto3.client("ecs", region_name=AWS_REGION)
+        logs_client = boto3.client("logs", region_name=AWS_REGION)
+        poll_interval = min(poll_interval, 5)
+        console.print("[dim]Debug mode: streaming CloudWatch logs (SF poll every 5 s).[/dim]\n")
 
     def _detach(sig, frame):  # noqa: ANN001
         nonlocal detached
@@ -207,7 +308,7 @@ def _watch_execution(sf_client, ssm_client, execution_arn: str, poll_interval: i
     try:
         while not detached:
             # Collect all unseen events via pagination
-            kwargs: dict = {"executionArn": execution_arn, "includeExecutionData": False}
+            kwargs: dict = {"executionArn": execution_arn, "includeExecutionData": debug}
             new_events: list[dict] = []
             while True:
                 resp = sf_client.get_execution_history(**kwargs)
@@ -221,6 +322,49 @@ def _watch_execution(sf_client, ssm_client, execution_arn: str, poll_interval: i
                     break
 
             for ev in new_events:
+                etype = ev["type"]
+
+                # Track current state name for log tailer association
+                if etype == "TaskStateEntered":
+                    current_state = ev.get("stateEnteredEventDetails", {}).get("name", "")
+
+                # Debug: attach CW log tailer when ECS task is submitted
+                if debug and etype == "TaskSubmitted" and current_state:
+                    details = ev.get("taskSubmittedEventDetails", {})
+                    try:
+                        output = json.loads(details.get("output", "{}"))
+                        tasks_list = output.get("Tasks", [])
+                        task_arn = tasks_list[0].get("TaskArn", "") if tasks_list else ""
+                        if task_arn:
+                            short_id = task_arn.split("/")[-1][:8]
+                            console.print(f"[dim]  ↳ Attaching logs for {current_state} (task {short_id}…)[/dim]")
+                            log_streams = _get_ecs_log_streams(ecs_client, task_arn)
+                            new_tailers: list[tuple[threading.Thread, threading.Event]] = []
+                            for ls in log_streams:
+                                stop_ev = threading.Event()
+                                t = threading.Thread(
+                                    target=_tail_log_stream,
+                                    args=(logs_client, ls["log_group"], ls["log_stream"], ls["container"], stop_ev),
+                                    daemon=True,
+                                )
+                                t.start()
+                                new_tailers.append((t, stop_ev))
+                            if new_tailers:
+                                active_tailers[current_state] = new_tailers
+                    except Exception as exc:
+                        console.print(f"[dim]  Could not attach log tailer: {exc}[/dim]")
+
+                # Stop tailers when their state exits (after a drain window)
+                if etype == "TaskStateExited":
+                    state_name = ev.get("stateExitedEventDetails", {}).get("name", "")
+                    if state_name in active_tailers:
+                        for _, stop_ev in active_tailers[state_name]:
+                            stop_ev.set()
+                        for t, _ in active_tailers[state_name]:
+                            t.join(timeout=10)
+                        del active_tailers[state_name]
+
+                # Render notable events
                 rendered = _event_label(ev)
                 if rendered is None:
                     continue
@@ -246,6 +390,13 @@ def _watch_execution(sf_client, ssm_client, execution_arn: str, poll_interval: i
             time.sleep(poll_interval)
 
     finally:
+        # Signal all active tailers to stop and wait briefly for final drain
+        for tailer_list in active_tailers.values():
+            for _, stop_ev in tailer_list:
+                stop_ev.set()
+        for tailer_list in active_tailers.values():
+            for t, _ in tailer_list:
+                t.join(timeout=8)
         signal.signal(signal.SIGINT, signal.SIG_DFL)
 
     if detached:
@@ -336,6 +487,11 @@ def main(
         "--watch/--no-watch",
         help="Poll and stream execution progress after triggering",
     ),
+    debug: bool = typer.Option(
+        False,
+        "--debug",
+        help="Stream ECS task CloudWatch logs in real time (implies --watch)",
+    ),
 ) -> None:
     console.rule("[bold blue]OPAC Data Step Function[/bold blue]")
 
@@ -414,8 +570,8 @@ def main(
     console.print("\n[bold green]✓ Execution started[/bold green]")
     console.print(f"ARN: [dim]{execution_arn}[/dim]")
 
-    if watch:
-        _watch_execution(sf_client, ssm_client, execution_arn)
+    if watch or debug:
+        _watch_execution(sf_client, ssm_client, execution_arn, debug=debug)
     else:
         console.print(
             f"\n[dim]If the execution fails, clean up the SSM context with:[/dim]\n"

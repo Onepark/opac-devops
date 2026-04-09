@@ -1,7 +1,8 @@
+import logging
 import boto3
 from botocore.exceptions import ClientError
 
-from utils.context import delete_context_from_parameter_store, get_or_create_context_from_param_store
+from utils.context import setup_logging, delete_context_from_parameter_store, get_or_create_context_from_param_store
 
 rds = boto3.client(service_name="rds")
 ssm = boto3.client(service_name="ssm")
@@ -11,25 +12,25 @@ def cleanup_on_failure():
     context = get_or_create_context_from_param_store(ssm)
 
     if context is None:
-        print("No context found in Parameter Store — nothing to clean up.")
+        logging.warning("No SSM context found — nothing to clean up.")
         exit(1)
 
     ephemeral_id = context.get("ephemeralRdsInstanceId")
 
     if ephemeral_id:
-        print(f"Deleting ephemeral RDS instance: {ephemeral_id}")
+        logging.info(f"Deleting ephemeral RDS instance: {ephemeral_id}")
         try:
             rds.delete_db_instance(
                 DBInstanceIdentifier=ephemeral_id,
                 SkipFinalSnapshot=True,
             )
-            print(f"Deletion initiated for {ephemeral_id}.")
+            logging.info(f"Deletion initiated for {ephemeral_id}")
         except rds.exceptions.DBInstanceNotFoundFault:
-            print(f"Instance {ephemeral_id} not found — already deleted or never created.")
+            logging.warning(f"Instance {ephemeral_id} not found — already deleted or never created.")
         except ClientError as exc:
-            print(f"Error deleting ephemeral instance: {exc}")
+            logging.error(f"Error deleting ephemeral instance: {exc}")
     else:
-        print("No ephemeralRdsInstanceId in context — instance was never created, skipping.")
+        logging.warning("No ephemeralRdsInstanceId in context — instance was never created, skipping.")
 
     delete_context_from_parameter_store(ssm)
 
@@ -38,4 +39,6 @@ def cleanup_on_failure():
 
 
 if __name__ == "__main__":
+    setup_logging()
+    logging.info("=== Step: Cleanup on Failure ===")
     cleanup_on_failure()
