@@ -2,9 +2,10 @@ import logging
 import os
 import boto3
 import psycopg2
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from utils.context import setup_logging, get_or_create_context_from_param_store
-from utils.rds import get_ephemeral_db_connection
+from utils.rds import get_ephemeral_db_connection, get_ephemeral_conn_params
 
 
 anonymisation_table_columns = {
@@ -60,7 +61,26 @@ ssm = boto3.client(service_name="ssm")
 def create_pgcrypto_extension(conn):
     with conn.cursor() as c:
         c.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto;")
+    conn.commit()
     logging.info("pgcrypto extension enabled")
+
+
+def _anonymise_table(conn_params: dict, table: str, set_clause_list: list[str]) -> tuple[str, int]:
+    """Anonymise all SET clauses for one table using a single connection. Returns (table, total_rows)."""
+    conn = psycopg2.connect(**conn_params)
+    total_rows = 0
+    try:
+        for set_clause in set_clause_list:
+            with conn.cursor() as c:
+                c.execute(f"UPDATE {table} {set_clause}")
+                total_rows += c.rowcount
+            conn.commit()
+        return table, total_rows
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def apply_anonymisation(state_machine_context):
@@ -68,23 +88,34 @@ def apply_anonymisation(state_machine_context):
         logging.info("anonymisation=False — skipping anonymisation")
         return
 
+    # Create pgcrypto extension once before parallel workers start (uses digest())
     conn = get_ephemeral_db_connection(rds, state_machine_context)
     create_pgcrypto_extension(conn)
+    conn.close()
 
-    for table, set_clause_list in anonymisation_table_columns.items():
-        for set_clause in set_clause_list:
-            update_query = f"UPDATE {table} {set_clause}"
+    conn_params = get_ephemeral_conn_params(rds, state_machine_context)
+    table_count = len(anonymisation_table_columns)
+    logging.info(f"Anonymising {table_count} tables in parallel (max_workers=8)…")
+
+    errors = 0
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = {
+            executor.submit(_anonymise_table, conn_params, table, set_clause_list): table
+            for table, set_clause_list in anonymisation_table_columns.items()
+        }
+        for future in as_completed(futures):
+            table = futures[future]
             try:
-                with conn.cursor() as c:
-                    c.execute(update_query)
-                    updated_row_count = c.rowcount
-                    logging.info(f"Anonymised {table}: {updated_row_count} rows")
-            except (Exception, psycopg2.DatabaseError) as e:
-                logging.error(f"Failed to anonymise {table}: {e}")
-            conn.commit()
+                _, total_rows = future.result()
+                logging.info(f"Anonymised {table}: {total_rows} rows")
+            except Exception as exc:
+                logging.error(f"Error anonymising {table}: {exc}")
+                errors += 1
 
-    conn.commit()
-    logging.info("Anonymisation complete")
+    if errors:
+        logging.warning(f"Anonymisation completed with {errors} table error(s)")
+    else:
+        logging.info(f"Anonymisation complete ({table_count} tables)")
 
 
 if __name__ == '__main__':
