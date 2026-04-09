@@ -23,9 +23,8 @@ eval "$(mise activate zsh)"
 ### 2 — Install remaining dependencies
 
 ```bash
-brew install awscli
-brew install --cask session-manager-plugin
-brew tap common-fate/granted && brew install granted
+mise install        # installs uv, awscli, doppler, granted
+brew install --cask session-manager-plugin   # not available in mise
 ```
 
 ### 3 — Authenticate

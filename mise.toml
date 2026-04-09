@@ -1,5 +1,8 @@
 [tools]
-uv = "latest"
+uv      = "latest"
+awscli  = "latest"
+doppler = "latest"
+granted = "latest"
 
 [tasks.trigger]
 description = "Trigger the data step function (drifting / anonymisation)"
