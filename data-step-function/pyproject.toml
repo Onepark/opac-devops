@@ -6,6 +6,5 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "boto3>=1.42.75",
-    "psycopg2-binary>=2.9.11",
-    "typer>=0.12",
+    "psycopg2-binary>=2.9.11"
 ]

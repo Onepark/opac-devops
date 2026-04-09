@@ -1,0 +1,10 @@
+[tools]
+uv = "latest"
+
+[tasks.trigger]
+description = "Trigger the data step function (drifting / anonymisation)"
+run = "uv run trigger_step_function.py"
+
+[tasks.bastion]
+description = "Open an SSM port-forwarding tunnel to a private RDS instance"
+run = "uv run bastion_connect.py"

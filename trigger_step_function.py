@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#   "boto3>=1.42",
+#   "typer>=0.12",
+#   "rich>=13",
+# ]
+# ///
 """CLI to trigger the OPAC data step function (drifting / anonymisation)."""
 
 from __future__ import annotations

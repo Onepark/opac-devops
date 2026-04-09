@@ -1,65 +1,6 @@
-# opac-devops
+# Data Step Function
 
-## Run the AWS Step Functions
-
-To run your AWS Step Function from the CLI, you use the `start-execution` command. Because the input
-is a complex JSON object, the most reliable way to handle it is by saving it to a temporary file or
-properly escaping the JSON string.
-
-### Option 1: Using a JSON File
-
-This is the cleanest method to avoid shell escaping errors with special characters or long strings.
-
-Save your input to a file named input.json:
-
-```json
-{
-  "comment": "inputs for state machine flow. It will be used as 'state' between step functions",
-  "snapshotArn": "arn:aws:rds:eu-west-3:418484240945:snapshot:golden-snapshot-20260305-postgres-18",
-  "snapshotDbName": "opac",
-  "snapshotDbUsername": "<db_snapshot_username>",
-  "snapshotDbPassword": "<db_snapshot_password>",
-  "snapshotDbPort": 5432,
-  "targetRdsInstanceId": "target-instance-test",
-  "anonymisation": false,
-  "drifting": true
-}
-```
-
-NB: in this example, we ask for no anonymisation but we ask for date drifting
-
-Run the command referencing that file:
-
-```shell
-aws stepfunctions start-execution \
---state-machine-arn "arn:aws:states:eu-west-3:418484240945:stateMachine:drift-anonymisation-state-machine" \
---input file://input.json
-```
-
-### Option 2: Inline String (Bash/Zsh)
-
-If one prefers not to create a file, you can pass the JSON as a single-quoted string.
-Note that you must ensure any internal quotes are handled correctly.
-
-```shell
-aws stepfunctions start-execution \
---state-machine-arn "arn:aws:states:eu-west-3:418484240945:stateMachine:drift-anonymisation-state-machine" \
---input '{
-"comment": "inputs for state machine flow",
-"snapshotArn": "arn:aws:rds:eu-west-3:418484240945:snapshot:golden-snapshot-20260305-postgres-18",
-"snapshotDbName": "opac",
-"snapshotDbUsername": "<db_snapshot_username>",
-"snapshotDbPassword": "<db_snapshot_password>",
-"snapshotDbPort": 5432,
-"targetRdsInstanceId": "target-instance-test",
-"anonymisation": true,
-"drifting": true
-}'
-```
-
-NB: in this example, we ask for both, anonymisation and date drifting
-
-### State Machine context / Parameter Store
+## State Machine context / Parameter Store
 
 The state machine "state"/"context" is saved in Parameter Store (parameter name: `/opac/int/step_function/context`)
 during the whole workflow of the State Machine.
@@ -74,7 +15,7 @@ Parameter Store will make one of the step function stop with a message (in the E
 This mechanism enforces singleton execution, ensuring that no more than one state machine instance is
 active at any given time.
 
-### Step Function ASL
+## Step Function ASL
 
 The ASL is kept in [`state-machine.json`](./state-machine.json). To deploy it:
 
@@ -101,8 +42,6 @@ aws ecr get-login-password --region eu-west-3 \
 
 Then tag the image you want to push (for instance `step-drifting`)
 
-# 2. Tag your image
-
 ```
 docker tag step-drifting:latest \
   <account_id>.dkr.ecr.eu-west-3.amazonaws.com/my-repo:tag
@@ -113,32 +52,6 @@ And then push to ECR:
 ```
 docker push 884080474326.dkr.ecr.eu-west-3.amazonaws.com/my-repo:tag
 ```
-
-### modify hosts file
-
-Because we use a ssm session to tunnel to PostgresSQL, we need to change the `hosts` file adding the line (for instance):
-
-```
-127.0.0.1  db-test2.c4k4uoc9kxxx.eu-west-3.rds.amazonaws.com
-```
-
-With this, psql can point to localhost and go through the ssm sesion to the EC2 shared bastion machine.
-
-### Postgres SQL SSL mode
-
-Download pem file for full ssl verification
-
-```
-curl -o ~/rds-certs/global-bundle.pem https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
-```
-
-### sso login
-
-`aws sso login --profile onepark-nonprod`
-
-### start ssm session to PostgreSQL
-
-`aws ssm start-session       --target "<instance id of EC2 shared bastion>"       --document-name "AWS-StartPortForwardingSessionToRemoteHost"       --parameters "{\"host\":[\"db-test2.c4k4uoc9kxxx.eu-west-3.rds.amazonaws.com\"],\"portNumber\":[\"5432\"],\"localPortNumber\":[\"5432\"]}"       --region "eu-west-3"`
 
 ### Drifting Step Local Dev
 
