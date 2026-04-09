@@ -1,4 +1,5 @@
 import os
+import re
 import boto3
 from datetime import datetime, timezone
 import psycopg2
@@ -205,8 +206,9 @@ if __name__ == '__main__':
     context = get_or_create_context_from_param_store(ssm, True)
 
     if context and "error" in context:
-        print("WARNING: A drifting/anonymisation process is currently in progress, exiting.")
-        exit(0)
+        print("ERROR: A stale or active drifting/anonymisation context exists in Parameter Store. "
+              "Delete /opac/int/step_function/context manually if the previous run is no longer active.")
+        exit(1)
 
     # Create the ephemeral instance that will be used for drifting and anonymisation
     # NB: state machine context is enriched with
@@ -214,8 +216,8 @@ if __name__ == '__main__':
     #       - state_machine_context["ephemeralRdsInstanceId"] : identifier of the ephemeral RDS instance
     create_ephemeral_instance_from_snapshot(state_machine_context=context,
                                             create_rds_instance=context.get("_debug_create_rds_instance", True))
-    # Wait for the instance to be available
-    wait_for_available_instance(rds, state_machine_context=context)
+    # Wait for the instance to be available (returns enriched context with db_host/db_status)
+    context = wait_for_available_instance(rds, state_machine_context=context)
 
     # Apply date drifting on the ephemeral RDS instance
     apply_date_drifting(state_machine_context=context)

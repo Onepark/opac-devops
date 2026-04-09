@@ -35,6 +35,14 @@ if __name__ == '__main__':
     # retrieve the context from previous step function (from parameter store)
     context = get_or_create_context_from_param_store(ssm)
 
+    if context is None:
+        print("ERROR: Context not found in Parameter Store — drifting step may have failed.")
+        exit(1)
+
+    if "ephemeralRdsInstanceId" not in context:
+        print("ERROR: ephemeralRdsInstanceId missing from context — drifting step did not complete successfully.")
+        exit(1)
+
     # Rename dance:
     # - rename target instance to another name
     # - rename ephemeral to target instance name

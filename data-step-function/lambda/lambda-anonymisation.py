@@ -98,5 +98,9 @@ if __name__ == '__main__':
     # retrieve the context from previous step function (from parameter store)
     context = get_or_create_context_from_param_store(ssm)
 
+    if context is None:
+        print("ERROR: Context not found in Parameter Store — drifting step may have failed.")
+        exit(1)
+
     # Apply anonymisation if requested (anonymisation=True in state_machine_context)
     apply_anonymisation(state_machine_context=context)
