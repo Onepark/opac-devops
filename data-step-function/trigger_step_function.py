@@ -27,6 +27,7 @@ STATE_MACHINE_ARN = (
     "drift-anonymisation-state-machine"
 )
 DOPPLER_PROJECT = "opac-data-step-function"
+SSM_CONTEXT_PARAM = "/opac/int/step_function/context"
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +154,32 @@ def _event_label(event: dict) -> tuple[str, str] | None:
     return style, message
 
 
-def _watch_execution(sf_client, execution_arn: str, poll_interval: int = 30) -> None:
+def _try_cleanup_ssm(ssm_client) -> None:
+    """Offer to delete the stale SSM context parameter after a failed execution."""
+    if not Confirm.ask(
+        f"\nClean up stale SSM context [dim]({SSM_CONTEXT_PARAM})[/dim] "
+        "to allow future executions?",
+        default=True,
+    ):
+        console.print(
+            f"[dim]To clean up manually:[/dim]\n"
+            f"  aws ssm delete-parameter --name \"{SSM_CONTEXT_PARAM}\" --region {AWS_REGION}"
+        )
+        return
+    try:
+        ssm_client.delete_parameter(Name=SSM_CONTEXT_PARAM)
+        console.print("[green]✓ SSM context cleared.[/green]")
+    except ssm_client.exceptions.ParameterNotFound:
+        console.print("[dim]SSM context was already absent.[/dim]")
+    except Exception as exc:
+        console.print(f"[red]Could not delete SSM parameter:[/red] {exc}")
+        console.print(
+            f"[dim]Run manually:[/dim]\n"
+            f"  aws ssm delete-parameter --name \"{SSM_CONTEXT_PARAM}\" --region {AWS_REGION}"
+        )
+
+
+def _watch_execution(sf_client, ssm_client, execution_arn: str, poll_interval: int = 30) -> None:
     """Poll execution history and print events until a terminal state is reached."""
     seen_ids: set[int] = set()
     start_time = time.monotonic()
@@ -217,6 +243,10 @@ def _watch_execution(sf_client, execution_arn: str, poll_interval: int = 30) -> 
     if detached:
         console.print("\n[yellow]Detached.[/yellow] Execution continues in AWS.")
         console.print(f"[dim]ARN: {execution_arn}[/dim]")
+        console.print(
+            f"\n[dim]If the execution fails, clean up the SSM context with:[/dim]\n"
+            f"  aws ssm delete-parameter --name \"{SSM_CONTEXT_PARAM}\" --region {AWS_REGION}"
+        )
     else:
         final = sf_client.describe_execution(executionArn=execution_arn)
         status = final["status"]
@@ -228,6 +258,7 @@ def _watch_execution(sf_client, execution_arn: str, poll_interval: int = 30) -> 
             console.print(f"\n[bold red]✗ {status}[/bold red] after {elapsed_str}")
             if cause := final.get("cause"):
                 console.print(f"[red]Cause:[/red] {cause}")
+            _try_cleanup_ssm(ssm_client)
 
 
 # ---------------------------------------------------------------------------
@@ -365,6 +396,7 @@ def main(
     # --- Execute ------------------------------------------------------------
     console.print("\nStarting execution…")
     sf_client = boto3.client("stepfunctions", region_name=AWS_REGION)
+    ssm_client = boto3.client("ssm", region_name=AWS_REGION)
     response = sf_client.start_execution(
         stateMachineArn=STATE_MACHINE_ARN,
         input=json.dumps(payload),
@@ -375,7 +407,12 @@ def main(
     console.print(f"ARN: [dim]{execution_arn}[/dim]")
 
     if watch:
-        _watch_execution(sf_client, execution_arn)
+        _watch_execution(sf_client, ssm_client, execution_arn)
+    else:
+        console.print(
+            f"\n[dim]If the execution fails, clean up the SSM context with:[/dim]\n"
+            f"  aws ssm delete-parameter --name \"{SSM_CONTEXT_PARAM}\" --region {AWS_REGION}"
+        )
 
 
 if __name__ == "__main__":

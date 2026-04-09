@@ -118,7 +118,13 @@ active at any given time.
           }
         }
       },
-      "Next": "ECS RunTask Anonymisation"
+      "Next": "ECS RunTask Anonymisation",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "ECS Cleanup On Failure"
+        }
+      ]
     },
     "ECS RunTask Anonymisation": {
       "Type": "Task",
@@ -156,7 +162,13 @@ active at any given time.
           }
         }
       },
-      "Next": "ECS RunTask Rename Dance"
+      "Next": "ECS RunTask Rename Dance",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "ECS Cleanup On Failure"
+        }
+      ]
     },
     "ECS RunTask Rename Dance": {
       "Type": "Task",
@@ -194,7 +206,52 @@ active at any given time.
           }
         }
       },
-      "End": true
+      "End": true,
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "ECS Cleanup On Failure"
+        }
+      ]
+    },
+    "ECS Cleanup On Failure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::ecs:runTask.sync",
+      "Arguments": {
+        "LaunchType": "FARGATE",
+        "Cluster": "arn:aws:ecs:eu-west-3:418484240945:cluster/opk-opac-int-ecs-cluster",
+        "TaskDefinition": "arn:aws:ecs:eu-west-3:418484240945:task-definition/ecs-nonprod-cleanup:1",
+        "Overrides": {
+          "ContainerOverrides": [
+            {
+              "Name": "step-cleanup",
+              "Environment": [
+                {
+                  "Name": "EXECUTION_NAME",
+                  "Value": "{% $states.context.Execution.Name %}"
+                }
+              ]
+            }
+          ]
+        },
+        "NetworkConfiguration": {
+          "AwsvpcConfiguration": {
+            "Subnets": ["subnet-08ff82d84df0352d0", "subnet-08dc62b993be26d9b"],
+            "SecurityGroups": [
+              "sg-03b93b8d540e47c8b",
+              "sg-0c17036dd7386fb96",
+              "sg-08e0a1b7df3e00049"
+            ],
+            "AssignPublicIp": "DISABLED"
+          }
+        }
+      },
+      "Next": "Execution Failed"
+    },
+    "Execution Failed": {
+      "Type": "Fail",
+      "Error": "ExecutionFailed",
+      "Cause": "Step function failed — ephemeral instance and SSM context have been cleaned up."
     }
   }
 }

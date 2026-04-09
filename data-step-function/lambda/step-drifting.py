@@ -1,7 +1,7 @@
 import os
 import re
 import boto3
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 import psycopg2
 
 from utils.context import get_or_create_context_from_param_store, update_context_in_param_store
@@ -166,11 +166,11 @@ def apply_date_drifting(state_machine_context: dict):
 
     conn = get_ephemeral_db_connection(rds, state_machine_context)
 
-    utc_now = datetime.now(timezone.utc)
+    today = datetime.now(timezone.utc).date()
 
-    snapshot_creation_date = datetime.fromisoformat(state_machine_context['snapshotCreationDate'])
+    snapshot_creation_date = date.fromisoformat(state_machine_context['snapshotCreationDate'])
 
-    delta = utc_now - snapshot_creation_date
+    delta = today - snapshot_creation_date
 
     _remove_overlapping_constraints(conn)
     conn.commit()

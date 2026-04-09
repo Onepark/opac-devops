@@ -41,4 +41,4 @@ ENTRYPOINT []
 # Use the non-root user to run our application
 USER nonroot
 
-CMD ["uv", "run", "--script", "lambda/step-anonymisation.py"]
+CMD ["uv", "run", "--script", "lambda/step-cleanup-on-failure.py"]
