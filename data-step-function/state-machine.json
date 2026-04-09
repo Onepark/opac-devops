@@ -9,7 +9,7 @@
       "Arguments": {
         "LaunchType": "FARGATE",
         "Cluster": "arn:aws:ecs:eu-west-3:418484240945:cluster/opk-opac-int-ecs-cluster",
-        "TaskDefinition": "arn:aws:ecs:eu-west-3:418484240945:task-definition/ecs-nonprod-drifting:6",
+        "TaskDefinition": "arn:aws:ecs:eu-west-3:418484240945:task-definition/ecs-nonprod-drifting:7",
         "Overrides": {
           "ContainerOverrides": [
             {
@@ -54,7 +54,7 @@
       "Arguments": {
         "LaunchType": "FARGATE",
         "Cluster": "arn:aws:ecs:eu-west-3:418484240945:cluster/opk-opac-int-ecs-cluster",
-        "TaskDefinition": "arn:aws:ecs:eu-west-3:418484240945:task-definition/ecs-nonprod-anonymisation:4",
+        "TaskDefinition": "arn:aws:ecs:eu-west-3:418484240945:task-definition/ecs-nonprod-anonymisation:5",
         "Overrides": {
           "ContainerOverrides": [
             {
@@ -99,7 +99,7 @@
       "Arguments": {
         "LaunchType": "FARGATE",
         "Cluster": "arn:aws:ecs:eu-west-3:418484240945:cluster/opk-opac-int-ecs-cluster",
-        "TaskDefinition": "arn:aws:ecs:eu-west-3:418484240945:task-definition/ecs-nonprod-rename-dance:1",
+        "TaskDefinition": "arn:aws:ecs:eu-west-3:418484240945:task-definition/ecs-nonprod-rename-dance:2",
         "Overrides": {
           "ContainerOverrides": [
             {
@@ -144,7 +144,7 @@
       "Arguments": {
         "LaunchType": "FARGATE",
         "Cluster": "arn:aws:ecs:eu-west-3:418484240945:cluster/opk-opac-int-ecs-cluster",
-        "TaskDefinition": "arn:aws:ecs:eu-west-3:418484240945:task-definition/ecs-nonprod-cleanup:1",
+        "TaskDefinition": "arn:aws:ecs:eu-west-3:418484240945:task-definition/ecs-nonprod-cleanup:2",
         "Overrides": {
           "ContainerOverrides": [
             {

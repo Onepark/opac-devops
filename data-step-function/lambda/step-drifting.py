@@ -2,11 +2,12 @@ import logging
 import os
 import re
 import boto3
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timezone
 import psycopg2
 
 from utils.context import setup_logging, get_or_create_context_from_param_store, update_context_in_param_store
-from utils.rds import wait_for_available_instance, get_ephemeral_db_connection
+from utils.rds import wait_for_available_instance, get_ephemeral_db_connection, get_ephemeral_conn_params
 
 # prefix for creation of the ephemeral RDS instance
 ephemeral_id_prefix = "ephemeral-transform"
@@ -139,6 +140,26 @@ def create_ephemeral_instance_from_snapshot(state_machine_context, create_rds_in
         return {"ephemeral_id": ephemeral_id}
 
 
+def _drift_table(conn_params: dict, table: str, columns: list[str], delta_days: int) -> tuple[str, int]:
+    """Drift all date columns in one table with a single UPDATE. Each call uses its own connection."""
+    set_clause = ", ".join(
+        f'"{col}" = "{col}" + INTERVAL \'{delta_days} days\''
+        for col in columns
+    )
+    conn = psycopg2.connect(**conn_params)
+    try:
+        with conn.cursor() as c:
+            c.execute(f'UPDATE "{table}" SET {set_clause}')
+            row_count = c.rowcount
+        conn.commit()
+        return table, row_count
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def _remove_overlapping_constraints(conn):
     try:
         logging.info("Removing overlapping constraints on entity_availabilities")
@@ -164,36 +185,46 @@ def apply_date_drifting(state_machine_context: dict):
         logging.info("drifting=False — skipping date drifting")
         return
 
+    # Main connection used only for constraint management
     conn = get_ephemeral_db_connection(rds, state_machine_context)
+    # Separate params dict used to open one connection per parallel worker
+    conn_params = get_ephemeral_conn_params(rds, state_machine_context)
 
     today = datetime.now(timezone.utc).date()
     snapshot_creation_date = date.fromisoformat(state_machine_context['snapshotCreationDate'])
-    delta = today - snapshot_creation_date
+    delta_days = (today - snapshot_creation_date).days
 
-    logging.info(f"Date delta: +{delta.days} days (snapshot={snapshot_creation_date}, today={today})")
+    logging.info(f"Date delta: +{delta_days} days (snapshot={snapshot_creation_date}, today={today})")
 
     _remove_overlapping_constraints(conn)
     conn.commit()
 
-    for drift_elements in date_drifting_table_column.items():
-        table = drift_elements[0]
-        columns = drift_elements[1]
+    table_count = len(date_drifting_table_column)
+    logging.info(f"Drifting {table_count} tables in parallel (max_workers=8)…")
 
-        for column in columns:
-            sql_update = f"UPDATE \"{table}\" SET \"{column}\" = \"{column}\" + INTERVAL '{delta.days} days' WHERE \"{column}\" is not null"
+    errors = 0
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = {
+            executor.submit(_drift_table, conn_params, table, columns, delta_days): table
+            for table, columns in date_drifting_table_column.items()
+        }
+        for future in as_completed(futures):
+            table = futures[future]
             try:
-                with conn.cursor() as c:
-                    c.execute(sql_update)
-                    updated_row_count = c.rowcount
-                    logging.info(f"Drifted {table}.{column}: {updated_row_count} rows")
-            except (Exception, psycopg2.DatabaseError) as e:
-                logging.error(f"Error drifting {table}.{column}: {e}")
-
-        conn.commit()
+                _, row_count = future.result()
+                logging.info(f"Drifted {table}: {row_count} rows")
+            except Exception as exc:
+                logging.error(f"Error drifting {table}: {exc}")
+                errors += 1
 
     _restore_overlapping_constraints(conn)
     conn.commit()
-    logging.info("Date drifting complete")
+    conn.close()
+
+    if errors:
+        logging.warning(f"Date drifting completed with {errors} table error(s)")
+    else:
+        logging.info(f"Date drifting complete ({table_count} tables)")
 
 
 if __name__ == '__main__':
