@@ -95,7 +95,11 @@ def create_ephemeral_instance_from_snapshot(state_machine_context, create_rds_in
     res_snapshot_desc = rds.describe_db_snapshots(DBSnapshotIdentifier=state_machine_context["snapshotArn"])
 
     if res_snapshot_desc and res_snapshot_desc.get("DBSnapshots") and len(res_snapshot_desc["DBSnapshots"]):
-        snapshot_creation_date = res_snapshot_desc["DBSnapshots"][0]["SnapshotCreateTime"]
+        # Extract snapshot date from name (ex: golden-snapshot-20260305-postgres-18)
+        snapshot_name = res_snapshot_desc["DBSnapshots"][0]["DBSnapshotIdentifier"]
+        snapshot_creation_date = datetime.strptime(re.search(r'\d{8}', snapshot_name).group(), '%Y%m%d').date()
+
+        # Then store it in SM context
         state_machine_context["snapshotCreationDate"] = snapshot_creation_date.isoformat()
     else:
         raise Exception("Can't retrieve snapshot creation date.")

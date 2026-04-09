@@ -28,7 +28,7 @@ def rename_dance(state_machine_context:dict):
     rds.delete_db_instance(DBInstanceIdentifier=old_target_instance_id,
                            SkipFinalSnapshot=True)
 
-    wait_for_deleted_instance(rds, db_instance_id=old_target_instance_id)
+    # wait_for_deleted_instance(rds, db_instance_id=old_target_instance_id)
 
 
 if __name__ == '__main__':
