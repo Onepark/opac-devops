@@ -82,38 +82,61 @@ If the execution fails, the CLI will prompt to clean up the stale SSM context
 
 ## bastion_connect.py
 
-Opens an SSM port-forwarding tunnel through the shared bastion EC2 to a private RDS instance.
-
-Automatically manages the `/etc/hosts` entry required for PostgreSQL SSL hostname verification,
-and removes it on exit (Ctrl+C or normal termination).
+Opens an SSM port-forwarding tunnel through the shared bastion EC2 to a private resource. Two subcommands are available.
 
 ```bash
-mise run bastion
-# or: uv run bastion_connect.py
+mise run bastion rds
+mise run bastion ecs
+```
+
+---
+
+### rds
+
+Lists all RDS instances and lets you pick one interactively. Automatically adds the RDS hostname to `/etc/hosts` (required for PostgreSQL SSL hostname verification) and removes it on exit.
+
+```bash
+mise run bastion rds
 ```
 
 | Option | Default | Description |
 |---|---|---|
-| `--rds`, `-r` | interactive list | RDS instance ID |
-| `--bastion`, `-b` | `opk-opac-shared-bastion` | Bastion EC2 instance ID (`i-xxx`) or Name tag |
 | `--local-port`, `-p` | `5432` | Local port to bind |
-| `--rds-port` | `5432` | Remote RDS port |
 
-**Examples**
-
-```bash
-# Interactive RDS selection (most common)
-mise run bastion
-
-# Direct — skip the listing
-uv run bastion_connect.py --rds db-test2
-
-# Custom local port (if 5432 is already in use)
-uv run bastion_connect.py --rds db-test2 --local-port 5433
-```
-
-Once the tunnel is open, connect with psql using the full RDS hostname (not `localhost`):
+Once the tunnel is open, connect using the RDS hostname (not `localhost`):
 
 ```bash
 psql -h <rds-hostname> -p 5432 -U <user> -d <db>
+```
+
+---
+
+### ecs
+
+Lists all ECS clusters and lets you pick a stage interactively. Tunnels through the bastion to the internal ALB which routes to the correct ECS service. Does **not** modify `/etc/hosts` — your browser is unaffected.
+
+```bash
+mise run bastion ecs
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--local-port`, `-p` | `8443` | Local port to bind |
+
+Once the tunnel is open, use any HTTP client (Postman, curl, httpie, etc.) to make requests. SSL verification must be disabled since the cert is issued for the ALB hostname, not `localhost`. Example with httpie:
+
+```bash
+https --verify=no --json POST https://localhost:8443/<path> \
+  "Host:<api-hostname>" \
+  query='...' \
+  variables:='{...}'
+```
+
+**Example — Login on int:**
+
+```bash
+https --verify=no POST https://localhost:8443/api/cpm/graphql \
+  "Host:api.opac.int.onepark.dev" \
+  query='mutation Login($input: LoginInput!) { login(input: $input) { jwt } }' \
+  variables:='{"input": {"email": "<email>", "password": "<password>", "slugId": "<slugId>"}}'
 ```
