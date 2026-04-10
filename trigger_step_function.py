@@ -7,7 +7,16 @@
 #   "rich>=13",
 # ]
 # ///
-"""CLI to trigger the OPAC data step function (drifting / anonymisation)."""
+"""CLI to trigger the OPAC data step function (drifting / anonymisation).
+
+Interactive flow
+----------------
+1. Operation  — drift or anonymisation
+               drift         → drifting=True,  anonymisation=False, Doppler config=int
+               anonymisation → drifting=False, anonymisation=True,  Doppler config=prod
+2. Snapshot   — picked from own-account snapshots (drift) or shared snapshots (anonymisation)
+3. Target RDS — picked from instance list
+"""
 
 from __future__ import annotations
 
@@ -40,6 +49,12 @@ ECS_CLUSTER_ARN = "arn:aws:ecs:eu-west-3:418484240945:cluster/opk-opac-int-ecs-c
 DOPPLER_PROJECT = "opac-data-step-function"
 SSM_CONTEXT_PARAM = "/opac/int/step_function/context"
 
+# Doppler config inferred from operation
+_OPERATION_DOPPLER_CONFIG = {
+    "drift": "int",
+    "anonymisation": "prod",
+}
+
 
 # ---------------------------------------------------------------------------
 # Doppler
@@ -69,7 +84,7 @@ def _fetch_doppler_secrets(config: str) -> dict[str, str]:
     except FileNotFoundError:
         console.print(
             "[bold red]Error:[/bold red] doppler CLI not found.\n"
-            "Install it with: [cyan]brew install dopplerhq/cli/doppler[/cyan]"
+            "Install it with: [cyan]mise install[/cyan]"
         )
         raise typer.Exit(1)
     except subprocess.CalledProcessError as exc:
@@ -77,6 +92,71 @@ def _fetch_doppler_secrets(config: str) -> dict[str, str]:
         raise typer.Exit(1)
 
     return json.loads(result.stdout)
+
+
+# ---------------------------------------------------------------------------
+# Snapshot picker
+# ---------------------------------------------------------------------------
+
+
+def _select_snapshot(shared: bool) -> str:
+    """List RDS snapshots and let the user pick one. Returns the snapshot ARN."""
+    label = "shared with this account" if shared else "own-account manual"
+    console.print(f"\nFetching {label} snapshots…")
+    rds = boto3.client("rds", region_name=AWS_REGION)
+
+    try:
+        paginator = rds.get_paginator("describe_db_snapshots")
+        if shared:
+            pages = paginator.paginate(SnapshotType="shared", IncludeShared=True)
+        else:
+            pages = paginator.paginate(SnapshotType="manual")
+        snapshots = [snap for page in pages for snap in page["DBSnapshots"]]
+    except Exception as exc:
+        console.print(f"[bold red]Error fetching snapshots:[/bold red] {exc}")
+        raise typer.Exit(1)
+
+    # Newest first, cap at 30 to keep the list manageable
+    snapshots.sort(key=lambda s: s.get("SnapshotCreateTime", datetime.min.replace(tzinfo=timezone.utc)), reverse=True)
+    snapshots = snapshots[:30]
+
+    if not snapshots:
+        console.print("[yellow]No snapshots found.[/yellow]")
+        return Prompt.ask("Snapshot ARN")
+
+    table = Table(
+        show_header=True,
+        header_style="bold",
+        title=f"Available Snapshots ({label})",
+    )
+    table.add_column("#", style="dim", width=4, justify="right")
+    table.add_column("Snapshot ID", style="cyan", no_wrap=True)
+    table.add_column("DB Instance")
+    table.add_column("Engine")
+    table.add_column("Created")
+    table.add_column("Status")
+
+    for i, snap in enumerate(snapshots, 1):
+        created = snap.get("SnapshotCreateTime")
+        created_str = created.strftime("%Y-%m-%d %H:%M") if created else "—"
+        status = snap.get("Status", "")
+        status_style = "green" if status == "available" else "yellow"
+        table.add_row(
+            str(i),
+            snap["DBSnapshotIdentifier"],
+            snap.get("DBInstanceIdentifier", ""),
+            f"{snap.get('Engine', '')} {snap.get('EngineVersion', '')}",
+            created_str,
+            f"[{status_style}]{status}[/{status_style}]",
+        )
+
+    console.print(table)
+
+    choice = Prompt.ask(
+        "Select snapshot",
+        choices=[str(i) for i in range(1, len(snapshots) + 1)],
+    )
+    return snapshots[int(choice) - 1]["DBSnapshotArn"]
 
 
 # ---------------------------------------------------------------------------
@@ -218,6 +298,7 @@ def _tail_log_stream(
 # Execution watcher
 # ---------------------------------------------------------------------------
 
+
 # Events we care about and how to render them
 _EVENT_RENDERERS: dict[str, tuple[str, str]] = {
     "ExecutionStarted":   ("dim",         "Execution started"),
@@ -238,7 +319,6 @@ def _event_label(event: dict) -> tuple[str, str] | None:
     if etype not in _EVENT_RENDERERS:
         return None
     style, template = _EVENT_RENDERERS[etype]
-    # Extract the state name for enter/exit events
     name = ""
     if etype == "TaskStateEntered":
         name = event.get("stateEnteredEventDetails", {}).get("name", "")
@@ -421,41 +501,24 @@ def _watch_execution(
 
 
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _ask(value: Optional[str], prompt: str) -> str:
-    if value is not None:
-        return value
-    return Prompt.ask(prompt)
-
-
-def _ask_bool(value: Optional[bool], prompt: str) -> bool:
-    if value is not None:
-        return value
-    return Confirm.ask(prompt)
-
-
-# ---------------------------------------------------------------------------
 # Command
 # ---------------------------------------------------------------------------
 
 
 @app.command()
 def main(
-    mode: Optional[str] = typer.Option(
+    operation: Optional[str] = typer.Option(
         None,
-        "--mode",
-        "-m",
-        help="Environment: int or prod",
+        "--operation",
+        "-o",
+        help="Operation: drift or anonymisation",
         show_default=False,
     ),
     snapshot_arn: Optional[str] = typer.Option(
         None,
         "--snapshot-arn",
         "-s",
-        help="ARN of the RDS snapshot to restore from",
+        help="ARN of the RDS snapshot to restore from (skips interactive listing if provided)",
         show_default=False,
     ),
     target_rds_instance_id: Optional[str] = typer.Option(
@@ -463,18 +526,6 @@ def main(
         "--target-rds-instance-id",
         "-t",
         help="Target RDS instance ID (skips interactive listing if provided)",
-        show_default=False,
-    ),
-    anonymisation: Optional[bool] = typer.Option(
-        None,
-        "--anonymisation/--no-anonymisation",
-        help="Enable or disable data anonymisation",
-        show_default=False,
-    ),
-    drifting: Optional[bool] = typer.Option(
-        None,
-        "--drifting/--no-drifting",
-        help="Enable or disable date drifting",
         show_default=False,
     ),
     dry_run: bool = typer.Option(
@@ -495,35 +546,43 @@ def main(
 ) -> None:
     console.rule("[bold blue]OPAC Data Step Function[/bold blue]")
 
-    # --- Mode ---------------------------------------------------------------
-    if mode is None:
-        mode = Prompt.ask("\nEnvironment", choices=["int", "prod"])
-    elif mode not in ("int", "prod"):
+    # --- Operation ----------------------------------------------------------
+    if operation is None:
+        op_table = Table(show_header=False, box=None, padding=(0, 2))
+        op_table.add_column("#", style="dim", width=3, justify="right")
+        op_table.add_column("Operation", style="cyan", no_wrap=True)
+        op_table.add_column("Description")
+        op_table.add_row("1", "drift", "Restore snapshot + date drifting  [dim](Doppler: int)[/dim]")
+        op_table.add_row("2", "anonymisation", "Restore snapshot + anonymisation  [dim](Doppler: prod)[/dim]")
+        console.print()
+        console.print(op_table)
+        op_choice = Prompt.ask("Select operation", choices=["1", "2"])
+        operation = ["drift", "anonymisation"][int(op_choice) - 1]
+    elif operation not in ("drift", "anonymisation"):
         console.print(
-            f"[bold red]Invalid mode '[/bold red][cyan]{mode}[/cyan]"
-            "[bold red]'. Choose int or prod.[/bold red]"
+            f"[bold red]Invalid operation '[/bold red][cyan]{operation}[/cyan]"
+            "[bold red]'. Choose drift or anonymisation.[/bold red]"
         )
         raise typer.Exit(1)
+
+    drifting = operation == "drift"
+    anonymisation = operation == "anonymisation"
+    doppler_config = _OPERATION_DOPPLER_CONFIG[operation]
 
     # --- Doppler credentials ------------------------------------------------
     console.print(
         f"\nFetching DB credentials from Doppler "
-        f"([cyan]{DOPPLER_PROJECT}[/cyan] / [cyan]{mode}[/cyan])…"
+        f"([cyan]{DOPPLER_PROJECT}[/cyan] / [cyan]{doppler_config}[/cyan])…"
     )
-    secrets = _fetch_doppler_secrets(mode)
+    secrets = _fetch_doppler_secrets(doppler_config)
 
-    # --- Snapshot ARN -------------------------------------------------------
-    console.print()
-    snapshot_arn = _ask(snapshot_arn, "Snapshot ARN")
+    # --- Snapshot -----------------------------------------------------------
+    if snapshot_arn is None:
+        snapshot_arn = _select_snapshot(shared=anonymisation)
 
-    # --- Target RDS instance (listing or manual) ----------------------------
+    # --- Target RDS instance ------------------------------------------------
     if target_rds_instance_id is None:
         target_rds_instance_id = _select_rds_instance()
-
-    # --- Flags --------------------------------------------------------------
-    console.print()
-    anonymisation = _ask_bool(anonymisation, "Enable anonymisation")
-    drifting = _ask_bool(drifting, "Enable date drifting")
 
     # --- Build payload ------------------------------------------------------
     payload: dict = {

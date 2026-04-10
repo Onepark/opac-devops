@@ -45,15 +45,21 @@ mise run trigger
 # or: uv run trigger_step_function.py
 ```
 
-All parameters can be passed as flags or filled in interactively:
+**Interactive flow**
+
+1. **Operation** — `drift` or `anonymisation`
+   - `drift` → `drifting=true`, `anonymisation=false`, Doppler config `int`
+   - `anonymisation` → `drifting=false`, `anonymisation=true`, Doppler config `prod`
+2. **Snapshot** — pick from own-account snapshots (drift) or shared snapshots (anonymisation)
+3. **Target RDS** — pick from instance list (filtered to `test`/`stg` instances)
+
+All parameters can be passed as flags to skip the interactive prompts:
 
 | Option | Default | Description |
 |---|---|---|
-| `--mode`, `-m` | prompted | Environment: `int` or `prod` |
-| `--snapshot-arn`, `-s` | prompted | ARN of the RDS snapshot to restore from |
+| `--operation`, `-o` | prompted | Operation: `drift` or `anonymisation` |
+| `--snapshot-arn`, `-s` | interactive list | ARN of the RDS snapshot to restore from |
 | `--target-rds-instance-id`, `-t` | interactive list | Target RDS instance ID |
-| `--anonymisation` / `--no-anonymisation` | prompted | Enable data anonymisation |
-| `--drifting` / `--no-drifting` | prompted | Enable date drifting |
 | `--watch` / `--no-watch` | `--watch` | Stream execution progress after triggering |
 | `--debug` | `false` | Also stream ECS task CloudWatch logs in real time (implies `--watch`) |
 | `--dry-run` | `false` | Print the payload without triggering |
@@ -64,15 +70,20 @@ All parameters can be passed as flags or filled in interactively:
 # Fully interactive
 mise run trigger
 
-# Non-interactive
+# Non-interactive drift
 uv run trigger_step_function.py \
-  --mode int \
+  --operation drift \
   --snapshot-arn arn:aws:rds:eu-west-3:418484240945:snapshot:golden-snapshot-20260305-postgres-18 \
-  --target-rds-instance-id db-test2 \
-  --drifting --no-anonymisation
+  --target-rds-instance-id db-test2
+
+# Non-interactive anonymisation
+uv run trigger_step_function.py \
+  --operation anonymisation \
+  --snapshot-arn arn:aws:rds:eu-west-3:123456789012:snapshot:shared-snapshot-20260305 \
+  --target-rds-instance-id db-test2
 
 # Dry-run to inspect the payload
-uv run trigger_step_function.py --mode int --dry-run
+uv run trigger_step_function.py --operation drift --dry-run
 ```
 
 If the execution fails, the CLI will prompt to clean up the stale SSM context
