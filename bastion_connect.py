@@ -48,7 +48,9 @@ def _find_bastion(ec2_client, name_tag: str) -> str:
     )
     instances = [i for r in resp["Reservations"] for i in r["Instances"]]
     if not instances:
-        console.print(f"[red]No running instance found with Name tag = {name_tag!r}[/red]")
+        console.print(
+            f"[red]No running instance found with Name tag = {name_tag!r}[/red]"
+        )
         raise typer.Exit(1)
     return instances[0]["InstanceId"]
 
@@ -57,17 +59,15 @@ def _select_rds_instance(rds_client) -> str:
     """List RDS instances and return the chosen hostname."""
     console.print("\nFetching RDS instances…")
     paginator = rds_client.get_paginator("describe_db_instances")
-    instances = [
-        inst
-        for page in paginator.paginate()
-        for inst in page["DBInstances"]
-    ]
+    instances = [inst for page in paginator.paginate() for inst in page["DBInstances"]]
 
     if not instances:
         console.print("[yellow]No RDS instances found.[/yellow]")
         return Prompt.ask("RDS hostname")
 
-    table = Table(show_header=True, header_style="bold", title="Available RDS Instances")
+    table = Table(
+        show_header=True, header_style="bold", title="Available RDS Instances"
+    )
     table.add_column("#", style="dim", width=4, justify="right")
     table.add_column("Instance ID", style="cyan", no_wrap=True)
     table.add_column("Class")
@@ -103,7 +103,12 @@ def _select_rds_instance(rds_client) -> str:
 
 def _hosts_add(hostname: str) -> None:
     subprocess.run(
-        ["sudo", "sh", "-c", f"echo '127.0.0.1 {hostname}  # ssm-tunnel' >> /etc/hosts"],
+        [
+            "sudo",
+            "sh",
+            "-c",
+            f"echo '127.0.0.1 {hostname}  # ssm-tunnel' >> /etc/hosts",
+        ],
         check=True,
     )
 
@@ -139,7 +144,9 @@ def main(
         help="RDS instance ID — skips interactive listing if provided",
         show_default=False,
     ),
-    local_port: int = typer.Option(5432, "--local-port", "-p", help="Local port to bind"),
+    local_port: int = typer.Option(
+        5432, "--local-port", "-p", help="Local port to bind"
+    ),
     rds_port: int = typer.Option(5432, "--rds-port", help="Remote RDS port"),
 ) -> None:
     console.rule("[bold blue]RDS SSM Tunnel[/bold blue]")
@@ -168,7 +175,9 @@ def main(
     # --- /etc/hosts ---
     # Required for SSL hostname verification: psql connects to the real RDS hostname
     # which resolves to 127.0.0.1 (the tunnel) instead of the private VPC address.
-    console.print(f"\nAdding [dim]127.0.0.1 {rds_host}[/dim] to /etc/hosts (requires sudo)…")
+    console.print(
+        f"\nAdding [dim]127.0.0.1 {rds_host}[/dim] to /etc/hosts (requires sudo)…"
+    )
     _hosts_add(rds_host)
     console.print("[green]✓[/green] Hosts entry added.")
 
@@ -186,8 +195,7 @@ def main(
         except Exception as exc:
             console.print(f"[yellow]Could not clean /etc/hosts:[/yellow] {exc}")
             console.print(
-                f"[dim]Remove manually:[/dim] "
-                f"sudo sed -i '' '/{rds_host}/d' /etc/hosts"
+                f"[dim]Remove manually:[/dim] sudo sed -i '' '/{rds_host}/d' /etc/hosts"
             )
 
     atexit.register(_cleanup)
@@ -205,15 +213,21 @@ def main(
 
     subprocess.run(
         [
-            "aws", "ssm", "start-session",
-            "--target", instance_id,
-            "--document-name", "AWS-StartPortForwardingSessionToRemoteHost",
-            "--parameters", (
+            "aws",
+            "ssm",
+            "start-session",
+            "--target",
+            instance_id,
+            "--document-name",
+            "AWS-StartPortForwardingSessionToRemoteHost",
+            "--parameters",
+            (
                 f'{{"host":["{rds_host}"],'
                 f'"portNumber":["{rds_port}"],'
                 f'"localPortNumber":["{local_port}"]}}'
             ),
-            "--region", AWS_REGION,
+            "--region",
+            AWS_REGION,
         ]
     )
 

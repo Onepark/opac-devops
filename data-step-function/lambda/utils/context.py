@@ -23,7 +23,9 @@ def delete_context_from_parameter_store(ssm):
         logging.info(f"SSM context deleted: {context_param_name}")
         return response
     except ssm.exceptions.ParameterNotFound:
-        logging.warning(f"SSM context not found (already deleted?): {context_param_name}")
+        logging.warning(
+            f"SSM context not found (already deleted?): {context_param_name}"
+        )
     except ClientError as e:
         logging.error(f"Unexpected error deleting SSM context: {e}")
 
@@ -32,19 +34,23 @@ def update_context_in_param_store(ssm, state_machine_context: dict):
     ssm.put_parameter(
         Name=context_param_name,
         Value=json.dumps(state_machine_context),
-        Type='SecureString',
-        Overwrite=True
+        Type="SecureString",
+        Overwrite=True,
     )
 
 
 def dump_context(state_machine_context: dict) -> str:
-    context_dumps = str(state_machine_context).replace(state_machine_context['snapshotDbPassword'], "******")
+    context_dumps = str(state_machine_context).replace(
+        state_machine_context["snapshotDbPassword"], "******"
+    )
     return context_dumps
 
 
 def get_or_create_context_from_param_store(ssm, first: bool = False):
     try:
-        state_machine_context_string = ssm.get_parameter(Name=context_param_name, WithDecryption=True)['Parameter']['Value']
+        state_machine_context_string = ssm.get_parameter(
+            Name=context_param_name, WithDecryption=True
+        )["Parameter"]["Value"]
         state_machine_context = json.loads(state_machine_context_string)
 
         logging.info(f"Loaded SSM context: {dump_context(state_machine_context)}")
@@ -53,9 +59,11 @@ def get_or_create_context_from_param_store(ssm, first: bool = False):
             return {"error": "drifting/anonymisation process already in progress"}
 
         return state_machine_context
-    except ssm.exceptions.ParameterNotFound as e:
+    except ssm.exceptions.ParameterNotFound:
         if not first:
-            logging.error(f"SSM context {context_param_name} not found — previous step may have failed")
+            logging.error(
+                f"SSM context {context_param_name} not found — previous step may have failed"
+            )
             return None
         else:
             logging.info(f"No existing SSM context — creating {context_param_name}")
@@ -69,17 +77,21 @@ def get_or_create_context_from_param_store(ssm, first: bool = False):
                 if "comment" in state_machine_context:
                     del state_machine_context["comment"]
 
-                state_machine_context['executionName'] = execution_name
+                state_machine_context["executionName"] = execution_name
 
                 ssm.put_parameter(
                     Name=context_param_name,
                     Value=json.dumps(state_machine_context),
-                    Type='SecureString',
-                    Overwrite=False
+                    Type="SecureString",
+                    Overwrite=False,
                 )
 
-                logging.info(f"SSM context created: {dump_context(state_machine_context)}")
+                logging.info(
+                    f"SSM context created: {dump_context(state_machine_context)}"
+                )
                 return state_machine_context
             else:
-                logging.error("EXECUTION_NAME or CONTEXT_JSON env var missing — cannot create SSM context")
+                logging.error(
+                    "EXECUTION_NAME or CONTEXT_JSON env var missing — cannot create SSM context"
+                )
                 return None

@@ -117,7 +117,12 @@ def _select_snapshot(shared: bool) -> str:
         raise typer.Exit(1)
 
     # Newest first, cap at 30 to keep the list manageable
-    snapshots.sort(key=lambda s: s.get("SnapshotCreateTime", datetime.min.replace(tzinfo=timezone.utc)), reverse=True)
+    snapshots.sort(
+        key=lambda s: s.get(
+            "SnapshotCreateTime", datetime.min.replace(tzinfo=timezone.utc)
+        ),
+        reverse=True,
+    )
     snapshots = snapshots[:30]
 
     if not snapshots:
@@ -185,7 +190,9 @@ def _select_rds_instance() -> str:
         console.print("[yellow]No RDS instances found.[/yellow]")
         return Prompt.ask("Target RDS instance ID")
 
-    table = Table(show_header=True, header_style="bold", title="Available RDS Instances")
+    table = Table(
+        show_header=True, header_style="bold", title="Available RDS Instances"
+    )
     table.add_column("#", style="dim", width=4, justify="right")
     table.add_column("Instance ID", style="cyan", no_wrap=True)
     table.add_column("Class")
@@ -220,7 +227,9 @@ def _select_rds_instance() -> str:
 def _get_ecs_log_streams(ecs_client, task_arn: str) -> list[dict]:
     """Return CloudWatch log configs for each container in the ECS task."""
     try:
-        tasks = ecs_client.describe_tasks(cluster=ECS_CLUSTER_ARN, tasks=[task_arn])["tasks"]
+        tasks = ecs_client.describe_tasks(cluster=ECS_CLUSTER_ARN, tasks=[task_arn])[
+            "tasks"
+        ]
         if not tasks:
             return []
         task_id = task_arn.split("/")[-1]
@@ -233,11 +242,13 @@ def _get_ecs_log_streams(ecs_client, task_arn: str) -> list[dict]:
             if log_cfg.get("logDriver") == "awslogs":
                 opts = log_cfg.get("options", {})
                 prefix = opts.get("awslogs-stream-prefix", "ecs")
-                result.append({
-                    "container": c["name"],
-                    "log_group": opts.get("awslogs-group", ""),
-                    "log_stream": f"{prefix}/{c['name']}/{task_id}",
-                })
+                result.append(
+                    {
+                        "container": c["name"],
+                        "log_group": opts.get("awslogs-group", ""),
+                        "log_stream": f"{prefix}/{c['name']}/{task_id}",
+                    }
+                )
         return result
     except Exception as exc:
         console.print(f"[dim]  Could not resolve log streams: {exc}[/dim]")
@@ -272,9 +283,13 @@ def _tail_log_stream(
         try:
             resp = logs_client.get_log_events(**kwargs)
             for ev in resp.get("events", []):
-                ts = datetime.fromtimestamp(ev["timestamp"] / 1000, tz=timezone.utc).strftime("%H:%M:%S")
+                ts = datetime.fromtimestamp(
+                    ev["timestamp"] / 1000, tz=timezone.utc
+                ).strftime("%H:%M:%S")
                 msg = ev["message"].rstrip()
-                console.print(f"  [dim][{ts}][/dim] [cyan]{container_name}[/cyan] [dim]│[/dim] {msg}")
+                console.print(
+                    f"  [dim][{ts}][/dim] [cyan]{container_name}[/cyan] [dim]│[/dim] {msg}"
+                )
             next_token = resp.get("nextForwardToken")
         except Exception:
             pass
@@ -287,9 +302,13 @@ def _tail_log_stream(
                 logGroupName=log_group, logStreamName=log_stream, nextToken=next_token
             )
             for ev in resp.get("events", []):
-                ts = datetime.fromtimestamp(ev["timestamp"] / 1000, tz=timezone.utc).strftime("%H:%M:%S")
+                ts = datetime.fromtimestamp(
+                    ev["timestamp"] / 1000, tz=timezone.utc
+                ).strftime("%H:%M:%S")
                 msg = ev["message"].rstrip()
-                console.print(f"  [dim][{ts}][/dim] [cyan]{container_name}[/cyan] [dim]│[/dim] {msg}")
+                console.print(
+                    f"  [dim][{ts}][/dim] [cyan]{container_name}[/cyan] [dim]│[/dim] {msg}"
+                )
         except Exception:
             pass
 
@@ -301,13 +320,13 @@ def _tail_log_stream(
 
 # Events we care about and how to render them
 _EVENT_RENDERERS: dict[str, tuple[str, str]] = {
-    "ExecutionStarted":   ("dim",         "Execution started"),
-    "TaskStateEntered":   ("bold cyan",   "▶  {name} — started"),
-    "TaskStateExited":    ("bold green",  "✓  {name} — completed"),
-    "ExecutionSucceeded": ("bold green",  "Execution SUCCEEDED"),
-    "ExecutionFailed":    ("bold red",    "Execution FAILED"),
-    "ExecutionTimedOut":  ("bold red",    "Execution TIMED OUT"),
-    "ExecutionAborted":   ("yellow",      "Execution ABORTED"),
+    "ExecutionStarted": ("dim", "Execution started"),
+    "TaskStateEntered": ("bold cyan", "▶  {name} — started"),
+    "TaskStateExited": ("bold green", "✓  {name} — completed"),
+    "ExecutionSucceeded": ("bold green", "Execution SUCCEEDED"),
+    "ExecutionFailed": ("bold red", "Execution FAILED"),
+    "ExecutionTimedOut": ("bold red", "Execution TIMED OUT"),
+    "ExecutionAborted": ("yellow", "Execution ABORTED"),
 }
 
 _TERMINAL_STATUSES = {"SUCCEEDED", "FAILED", "TIMED_OUT", "ABORTED"}
@@ -337,7 +356,7 @@ def _try_cleanup_ssm(ssm_client) -> None:
     ):
         console.print(
             f"[dim]To clean up manually:[/dim]\n"
-            f"  aws ssm delete-parameter --name \"{SSM_CONTEXT_PARAM}\" --region {AWS_REGION}"
+            f'  aws ssm delete-parameter --name "{SSM_CONTEXT_PARAM}" --region {AWS_REGION}'
         )
         return
     try:
@@ -349,7 +368,7 @@ def _try_cleanup_ssm(ssm_client) -> None:
         console.print(f"[red]Could not delete SSM parameter:[/red] {exc}")
         console.print(
             f"[dim]Run manually:[/dim]\n"
-            f"  aws ssm delete-parameter --name \"{SSM_CONTEXT_PARAM}\" --region {AWS_REGION}"
+            f'  aws ssm delete-parameter --name "{SSM_CONTEXT_PARAM}" --region {AWS_REGION}'
         )
 
 
@@ -372,7 +391,9 @@ def _watch_execution(
         ecs_client = boto3.client("ecs", region_name=AWS_REGION)
         logs_client = boto3.client("logs", region_name=AWS_REGION)
         poll_interval = min(poll_interval, 5)
-        console.print("[dim]Debug mode: streaming CloudWatch logs (SF poll every 5 s).[/dim]\n")
+        console.print(
+            "[dim]Debug mode: streaming CloudWatch logs (SF poll every 5 s).[/dim]\n"
+        )
 
     def _detach(sig, frame):  # noqa: ANN001
         nonlocal detached
@@ -388,7 +409,10 @@ def _watch_execution(
     try:
         while not detached:
             # Collect all unseen events via pagination
-            kwargs: dict = {"executionArn": execution_arn, "includeExecutionData": debug}
+            kwargs: dict = {
+                "executionArn": execution_arn,
+                "includeExecutionData": debug,
+            }
             new_events: list[dict] = []
             while True:
                 resp = sf_client.get_execution_history(**kwargs)
@@ -406,7 +430,9 @@ def _watch_execution(
 
                 # Track current state name for log tailer association
                 if etype == "TaskStateEntered":
-                    current_state = ev.get("stateEnteredEventDetails", {}).get("name", "")
+                    current_state = ev.get("stateEnteredEventDetails", {}).get(
+                        "name", ""
+                    )
 
                 # Debug: attach CW log tailer when ECS task is submitted
                 if debug and etype == "TaskSubmitted" and current_state:
@@ -414,17 +440,29 @@ def _watch_execution(
                     try:
                         output = json.loads(details.get("output", "{}"))
                         tasks_list = output.get("Tasks", [])
-                        task_arn = tasks_list[0].get("TaskArn", "") if tasks_list else ""
+                        task_arn = (
+                            tasks_list[0].get("TaskArn", "") if tasks_list else ""
+                        )
                         if task_arn:
                             short_id = task_arn.split("/")[-1][:8]
-                            console.print(f"[dim]  ↳ Attaching logs for {current_state} (task {short_id}…)[/dim]")
+                            console.print(
+                                f"[dim]  ↳ Attaching logs for {current_state} (task {short_id}…)[/dim]"
+                            )
                             log_streams = _get_ecs_log_streams(ecs_client, task_arn)
-                            new_tailers: list[tuple[threading.Thread, threading.Event]] = []
+                            new_tailers: list[
+                                tuple[threading.Thread, threading.Event]
+                            ] = []
                             for ls in log_streams:
                                 stop_ev = threading.Event()
                                 t = threading.Thread(
                                     target=_tail_log_stream,
-                                    args=(logs_client, ls["log_group"], ls["log_stream"], ls["container"], stop_ev),
+                                    args=(
+                                        logs_client,
+                                        ls["log_group"],
+                                        ls["log_stream"],
+                                        ls["container"],
+                                        stop_ev,
+                                    ),
                                     daemon=True,
                                 )
                                 t.start()
@@ -432,7 +470,9 @@ def _watch_execution(
                             if new_tailers:
                                 active_tailers[current_state] = new_tailers
                     except Exception as exc:
-                        console.print(f"[dim]  Could not attach log tailer: {exc}[/dim]")
+                        console.print(
+                            f"[dim]  Could not attach log tailer: {exc}[/dim]"
+                        )
 
                 # Stop tailers when their state exits (after a drain window)
                 if etype == "TaskStateExited":
@@ -454,9 +494,7 @@ def _watch_execution(
                 console.print(f"{timestamp}  [{style}]{message}[/{style}]")
 
             # Check terminal status
-            status = sf_client.describe_execution(
-                executionArn=execution_arn
-            )["status"]
+            status = sf_client.describe_execution(executionArn=execution_arn)["status"]
 
             if status in _TERMINAL_STATUSES:
                 break
@@ -484,7 +522,7 @@ def _watch_execution(
         console.print(f"[dim]ARN: {execution_arn}[/dim]")
         console.print(
             f"\n[dim]If the execution fails, clean up the SSM context with:[/dim]\n"
-            f"  aws ssm delete-parameter --name \"{SSM_CONTEXT_PARAM}\" --region {AWS_REGION}"
+            f'  aws ssm delete-parameter --name "{SSM_CONTEXT_PARAM}" --region {AWS_REGION}'
         )
     else:
         final = sf_client.describe_execution(executionArn=execution_arn)
@@ -552,8 +590,14 @@ def main(
         op_table.add_column("#", style="dim", width=3, justify="right")
         op_table.add_column("Operation", style="cyan", no_wrap=True)
         op_table.add_column("Description")
-        op_table.add_row("1", "drift", "Restore snapshot + date drifting  [dim](Doppler: int)[/dim]")
-        op_table.add_row("2", "anonymisation", "Restore snapshot + anonymisation  [dim](Doppler: prod)[/dim]")
+        op_table.add_row(
+            "1", "drift", "Restore snapshot + date drifting  [dim](Doppler: int)[/dim]"
+        )
+        op_table.add_row(
+            "2",
+            "anonymisation",
+            "Restore snapshot + anonymisation  [dim](Doppler: prod)[/dim]",
+        )
         console.print()
         console.print(op_table)
         op_choice = Prompt.ask("Select operation", choices=["1", "2"])
@@ -634,7 +678,7 @@ def main(
     else:
         console.print(
             f"\n[dim]If the execution fails, clean up the SSM context with:[/dim]\n"
-            f"  aws ssm delete-parameter --name \"{SSM_CONTEXT_PARAM}\" --region {AWS_REGION}"
+            f'  aws ssm delete-parameter --name "{SSM_CONTEXT_PARAM}" --region {AWS_REGION}'
         )
 
 
