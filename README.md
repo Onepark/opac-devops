@@ -177,3 +177,23 @@ Oban.insert(OpacCore.Payments.Workers.AccountingReport.new(%{"period" => "monthl
 # Force a specific reference date (useful to report on past months with real data)
 Oban.insert(OpacCore.Payments.Workers.AccountingReport.new(%{"period" => "monthly", "today" => "2026-06-01"}))
 ```
+
+## Container images
+
+Image build contexts live under `images/`:
+
+- `images/data-step-function/` — drift/anonymisation/rename-dance images and ASL.
+- `images/stg-prod-restore/` — staging production-derived restore tooling images used by the Terraform restore stack.
+
+Build and push one image at a time:
+
+```bash
+images/build-push.sh stg-prod-restore-db-admin
+images/build-push.sh stg-prod-restore-sanitizer
+```
+
+The default tag is the current git SHA. Override with an explicit second argument when needed:
+
+```bash
+images/build-push.sh stg-prod-restore-db-admin 2026-06-03-1
+```
