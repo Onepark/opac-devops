@@ -78,7 +78,9 @@ def main() -> None:
     salt = os.environ.get("ANONYMISATION_SALT", "local-test-salt")
     run_collisions = os.environ.get("RUN_COLLISION_CHECKS", "false").lower() == "true"
 
-    logging.info("Connecting to %s:%s/%s as %s (sslmode=%s)", host, port, dbname, user, sslmode)
+    logging.info(
+        "Connecting to %s:%s/%s as %s (sslmode=%s)", host, port, dbname, user, sslmode
+    )
 
     start = time.monotonic()
 
@@ -106,7 +108,9 @@ def main() -> None:
 
         with conn:
             with conn.cursor() as cursor:
-                report = run_preflight(cursor, policy, uncovered_pii_mode=uncovered_mode)
+                report = run_preflight(
+                    cursor, policy, uncovered_pii_mode=uncovered_mode
+                )
 
         duration = time.monotonic() - start
         _log_preflight_report(policy, report, duration)

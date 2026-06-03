@@ -1,5 +1,9 @@
 from restore_tooling.sanitizer_execution import run_collision_checks, run_execution
-from restore_tooling.sanitizer_policy import BatchConfig, SanitizationPolicy, load_policy
+from restore_tooling.sanitizer_policy import (
+    BatchConfig,
+    SanitizationPolicy,
+    load_policy,
+)
 
 
 class FakeConnection:
@@ -55,7 +59,10 @@ def test_run_execution_empty_policy_returns_report():
 
     assert report.passed is True
     assert report.tables == ()
-    assert any("CREATE SCHEMA IF NOT EXISTS restore_sanitizer;" in s for s, _ in cursor.statements)
+    assert any(
+        "CREATE SCHEMA IF NOT EXISTS restore_sanitizer;" in s
+        for s, _ in cursor.statements
+    )
 
 
 def test_run_collision_checks_uses_discovered_unique_columns():

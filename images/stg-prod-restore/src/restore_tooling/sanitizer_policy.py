@@ -24,6 +24,7 @@ class JsonbKeyRule:
 class ColumnRule:
     strategy: Optional[str] = None
     unique: bool = False
+    array: bool = False
     strategy_by_condition: tuple[StrategyCondition, ...] = ()
     jsonb_keys: tuple[tuple[str, JsonbKeyRule], ...] = ()
 
@@ -94,7 +95,12 @@ def _parse_jsonb_keys(keys: Any) -> tuple[tuple[str, JsonbKeyRule], ...]:
     if not keys or not isinstance(keys, dict):
         return ()
     return tuple(
-        (k, JsonbKeyRule(strategy=str(v.get("strategy", "")), unique=bool(v.get("unique", False))))
+        (
+            k,
+            JsonbKeyRule(
+                strategy=str(v.get("strategy", "")), unique=bool(v.get("unique", False))
+            ),
+        )
         for k, v in keys.items()
     )
 
@@ -107,18 +113,25 @@ def _parse_column(name: str, raw: Any) -> ColumnRule:
     conditions = raw.get("strategy_by_condition")
     if conditions is not None:
         if not isinstance(conditions, list) or len(conditions) == 0:
-            raise ValueError(f"strategy_by_condition for {name} must be a non-empty list")
+            raise ValueError(
+                f"strategy_by_condition for {name} must be a non-empty list"
+            )
         parsed = tuple(
-            StrategyCondition(where=str(c.get("where", "")), strategy=str(c.get("strategy", "")))
+            StrategyCondition(
+                where=str(c.get("where", "")), strategy=str(c.get("strategy", ""))
+            )
             for c in conditions
         )
         return ColumnRule(strategy_by_condition=parsed)
     strategy = raw.get("strategy", "")
     if not strategy:
-        raise ValueError(f"Column {name} has no strategy, type, or strategy_by_condition")
+        raise ValueError(
+            f"Column {name} has no strategy, type, or strategy_by_condition"
+        )
     return ColumnRule(
         strategy=strategy,
         unique=bool(raw.get("unique", False)),
+        array=bool(raw.get("array", False)),
     )
 
 

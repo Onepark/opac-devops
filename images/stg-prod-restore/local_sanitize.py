@@ -99,7 +99,9 @@ def main() -> None:
     # --- Preflight ---
     logging.info("=== PREFLIGHT ===")
     policy = load_policy()
-    logging.info("Loaded policy version %d with %d tables", policy.version, len(policy.tables))
+    logging.info(
+        "Loaded policy version %d with %d tables", policy.version, len(policy.tables)
+    )
 
     with conn_factory() as conn:
         with conn.cursor() as cursor:
@@ -143,12 +145,17 @@ def main() -> None:
     logging.info("=== COLLISION CHECKS ===")
     with conn_factory() as conn:
         with conn.cursor() as cursor:
-            collisions = run_collision_checks(cursor, policy, salt, report.unique_columns)
+            collisions = run_collision_checks(
+                cursor, policy, salt, report.unique_columns
+            )
     if collisions:
         for c in collisions:
             logging.error(
                 "Collision: %s.%s — value '%s' has %d rows",
-                c.table, c.column, c.generated_value, c.row_count,
+                c.table,
+                c.column,
+                c.generated_value,
+                c.row_count,
             )
         logging.error("Collision(s) detected — aborting")
         raise SystemExit(1)

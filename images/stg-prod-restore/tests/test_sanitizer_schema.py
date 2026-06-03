@@ -1,4 +1,3 @@
-import pytest
 from restore_tooling.sanitizer_schema import (
     SchemaReport,
     SchemaIssue,
@@ -14,8 +13,12 @@ def test_schema_issue_dataclass():
 
 
 def test_schema_report_equality():
-    r1 = SchemaReport(passed=True, issues=(), unique_columns=(), suspicious_uncovered=())
-    r2 = SchemaReport(passed=True, issues=(), unique_columns=(), suspicious_uncovered=())
+    r1 = SchemaReport(
+        passed=True, issues=(), unique_columns=(), suspicious_uncovered=()
+    )
+    r2 = SchemaReport(
+        passed=True, issues=(), unique_columns=(), suspicious_uncovered=()
+    )
     assert r1 == r2
 
 
@@ -67,25 +70,34 @@ class MockCursorWithUnique:
                 for c, dt in cols.items()
             ]
         # Return unique constraints
-        return [
-            (t, c)
-            for t, cols in self._unique_constraints.items()
-            for c in cols
-        ]
+        return [(t, c) for t, cols in self._unique_constraints.items() for c in cols]
 
 
 def test_check_uncovered_simple():
     from restore_tooling.sanitizer_policy import load_policy
 
     policy = load_policy()
-    schema = {"customers": {"email": "text", "phone": "text", "firstname": "text", "lastname": "text", "id": "integer"}}
+    schema = {
+        "customers": {
+            "email": "text",
+            "phone": "text",
+            "firstname": "text",
+            "lastname": "text",
+            "id": "integer",
+        }
+    }
     # All suspicious columns are covered by policy
     result = _check_uncovered(schema, policy)
     assert len(result) == 0
 
 
 def test_check_uncovered_finds_email():
-    from restore_tooling.sanitizer_policy import SanitizationPolicy, TablePolicy, ColumnRule, BatchConfig
+    from restore_tooling.sanitizer_policy import (
+        SanitizationPolicy,
+        TablePolicy,
+        ColumnRule,
+        BatchConfig,
+    )
 
     policy = SanitizationPolicy(
         version=1,
@@ -95,9 +107,7 @@ def test_check_uncovered_finds_email():
             TablePolicy(
                 name="test_table",
                 batch=BatchConfig(),
-                columns=(
-                    ("id", ColumnRule(strategy="text_token")),
-                ),
+                columns=(("id", ColumnRule(strategy="text_token")),),
             ),
         ),
     )
@@ -115,7 +125,10 @@ def test_check_uncovered_finds_email():
 
 
 def test_check_uncovered_technical_columns_ignored():
-    from restore_tooling.sanitizer_policy import SanitizationPolicy, TablePolicy, ColumnRule, BatchConfig
+    from restore_tooling.sanitizer_policy import (
+        SanitizationPolicy,
+        BatchConfig,
+    )
 
     policy = SanitizationPolicy(
         version=1,
@@ -139,11 +152,14 @@ def test_check_uncovered_technical_columns_ignored():
 
 def test_preflight_missing_pgcrypto():
     from restore_tooling.sanitizer_policy import load_policy
+
     policy = load_policy()
-    cursor = MockCursor({
-        "customers": {"email": "text"},
-        "users": {"email": "text"},
-    })
+    cursor = MockCursor(
+        {
+            "customers": {"email": "text"},
+            "users": {"email": "text"},
+        }
+    )
     report = run_preflight(cursor, policy, uncovered_pii_mode="warn")
     assert not report.passed
     # Should have pgcrypto error

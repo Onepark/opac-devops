@@ -1,5 +1,3 @@
-import pytest
-
 from restore_tooling.sanitizer_policy import load_policy
 from restore_tooling.sanitizer_sql import (
     column_update_expr,
@@ -22,7 +20,10 @@ def test_install_helpers_contains_all_functions():
     assert "anon_national_identifier_fr" in sql
     assert "anon_text_token" in sql
     assert "CREATE SCHEMA IF NOT EXISTS restore_sanitizer" in sql
-    assert "CREATE SCHEMA IF NOT EXISTS restore_sanitizer;\nCREATE OR REPLACE FUNCTION" in sql
+    assert (
+        "CREATE SCHEMA IF NOT EXISTS restore_sanitizer;\nCREATE OR REPLACE FUNCTION"
+        in sql
+    )
 
 
 def test_verify_helpers_contains_all():
@@ -75,14 +76,17 @@ def test_generate_update_sql_jsonb():
     entities = policy.find_table("entities")
     assert entities is not None
     updates = generate_update_sql(policy, entities)
-    assert len(updates) == 1
-    assert "contact_info" in updates[0]
-    assert "jsonb_set" in updates[0]
-    assert 'SET "contact_info" = jsonb_set' in updates[0]
-    assert "SET jsonb_set" not in updates[0]
-    assert "ARRAY['email']" in updates[0]
-    assert "ARRAY['phone']" in updates[0]
-    assert 'WHERE "contact_info" IS NOT NULL' in updates[0]
+    assert len(updates) == 2
+    # First statement is the normal column (name)
+    assert "anon_company_name" in updates[0]
+    # Second statement is the JSONB column (contact_info)
+    assert "contact_info" in updates[1]
+    assert "jsonb_set" in updates[1]
+    assert 'SET "contact_info" = jsonb_set' in updates[1]
+    assert "SET jsonb_set" not in updates[1]
+    assert "ARRAY['email']" in updates[1]
+    assert "ARRAY['phone']" in updates[1]
+    assert 'WHERE "contact_info" IS NOT NULL' in updates[1]
 
 
 def test_generate_update_sql_conditional():
@@ -105,7 +109,9 @@ def test_generate_update_sql_invoices_both():
     jsonb_updates = [u for u in updates if "pdf_creation_data" in u]
     assert len(jsonb_updates) == 1
     assert "jsonb_set" in jsonb_updates[0]
-    normal_updates = [u for u in updates if "customer_" in u and "pdf_creation_data" not in u]
+    normal_updates = [
+        u for u in updates if "customer_" in u and "pdf_creation_data" not in u
+    ]
     assert len(normal_updates) == 3
 
 

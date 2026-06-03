@@ -94,8 +94,9 @@ tables:
 
   partners:
     columns:
-      email_for_commission_invoices:
+      emails_for_commission_invoices:
         strategy: email
+        array: true
       iban:
         strategy: iban_fr
       name:

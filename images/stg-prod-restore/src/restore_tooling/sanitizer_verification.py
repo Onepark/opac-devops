@@ -4,7 +4,7 @@ import dataclasses
 import logging
 from typing import Any
 
-from .sanitizer_policy import SanitizationPolicy, TablePolicy
+from .sanitizer_policy import SanitizationPolicy
 from .sanitizer_sql import verification_sql
 
 
@@ -43,7 +43,9 @@ def run_verification(
                     checked = row[1] or 0
                     failed = row[2] or 0
                     results.append(
-                        VerificationResult(target=target, checked=checked, failed=failed)
+                        VerificationResult(
+                            target=target, checked=checked, failed=failed
+                        )
                     )
 
     failed_results = [r for r in results if r.failed > 0]

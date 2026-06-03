@@ -65,7 +65,9 @@ def _conn_factory(env: dict[str, str], app_secret) -> Callable:
 def _preflight(env: dict[str, str]) -> tuple:
     """Run non-mutating preflight checks. Returns (policy, report)."""
     policy = load_policy()
-    logging.info("Loaded policy version %d with %d tables", policy.version, len(policy.tables))
+    logging.info(
+        "Loaded policy version %d with %d tables", policy.version, len(policy.tables)
+    )
 
     app_secret = get_app_secret(
         client("secretsmanager", env["AWS_REGION"]), env["APP_SECRET_ARN"]
@@ -187,9 +189,7 @@ def cmd_sanitize() -> None:
         # Verification
         with conn_factory() as conn:
             with conn.cursor() as cursor:
-                verify_report = run_verification(
-                    cursor, policy, mode=verification_mode
-                )
+                verify_report = run_verification(cursor, policy, mode=verification_mode)
 
         total_duration = time.monotonic() - start
         summary = {
@@ -224,7 +224,9 @@ def cmd_sanitize() -> None:
                 ],
             },
             "duration_seconds": round(total_duration, 2),
-            "status": "passed" if exec_report.passed and verify_report.passed else "failed",
+            "status": "passed"
+            if exec_report.passed and verify_report.passed
+            else "failed",
         }
         logging.info("Sanitization summary: %s", json.dumps(summary, indent=2))
 

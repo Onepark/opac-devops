@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 import dataclasses
-import logging
 import re
 from typing import Any
 
 from .sanitizer_policy import (
-    ColumnRule,
     SanitizationPolicy,
-    TablePolicy,
     known_strategies,
 )
 
@@ -78,7 +75,11 @@ class SchemaReport:
 def _resolve_table_columns(
     cursor: Any, policy: SanitizationPolicy
 ) -> dict[str, dict[str, str]]:
-    """Returns {table_name: {column_name: data_type}} for all configured tables."""
+    """Returns {table_name: {column_name: data_type}} for all configured tables.
+
+    For ARRAY columns, data_type is reported as 'ARRAY' by information_schema.
+    We also fetch the element type via the udt_name column (e.g. '_varchar' → 'varchar').
+    """
     tables = [t.name for t in policy.tables]
     if not tables:
         return {}
@@ -86,15 +87,23 @@ def _resolve_table_columns(
     placeholders = ",".join("%s" for _ in tables)
     cursor.execute(
         f"""
-        SELECT table_name, column_name, data_type
+        SELECT table_name, column_name, data_type,
+               CASE WHEN data_type = 'ARRAY' THEN
+                   ltrim(udt_name, '_')
+               ELSE NULL END AS element_type
         FROM information_schema.columns
         WHERE table_schema = %s AND table_name = ANY (ARRAY[{placeholders}])
         """,
         [policy.schema_name] + tables,
     )
     result: dict[str, dict[str, str]] = {}
-    for table_name, column_name, data_type in cursor.fetchall():
-        result.setdefault(table_name, {})[column_name] = data_type
+    for table_name, column_name, data_type, element_type in cursor.fetchall():
+        # For array columns, store as "ARRAY" so callers can distinguish,
+        # but also track element type for validation
+        if data_type == "ARRAY" and element_type:
+            result.setdefault(table_name, {})[column_name] = f"ARRAY:{element_type}"
+        else:
+            result.setdefault(table_name, {})[column_name] = data_type
     return result
 
 
@@ -171,7 +180,9 @@ def run_preflight(
     for table in policy.tables:
         table_cols = schema_columns.get(table.name)
         if table_cols is None:
-            issues.append(SchemaIssue("error", f"Table '{table.name}' not found in schema"))
+            issues.append(
+                SchemaIssue("error", f"Table '{table.name}' not found in schema")
+            )
             continue
 
         for col_name, rule in table.columns:
@@ -179,7 +190,9 @@ def run_preflight(
                 actual_type = table_cols.get(col_name)
                 if actual_type is None:
                     issues.append(
-                        SchemaIssue("error", f"Column '{table.name}.{col_name}' not found")
+                        SchemaIssue(
+                            "error", f"Column '{table.name}.{col_name}' not found"
+                        )
                     )
                 elif actual_type not in ("json", "jsonb"):
                     issues.append(
@@ -200,12 +213,17 @@ def run_preflight(
                 actual_type = table_cols.get(col_name)
                 if actual_type is None:
                     issues.append(
-                        SchemaIssue("error", f"Column '{table.name}.{col_name}' not found")
+                        SchemaIssue(
+                            "error", f"Column '{table.name}.{col_name}' not found"
+                        )
                     )
                 for cond in rule.strategy_by_condition:
                     if not cond.strategy:
                         issues.append(
-                            SchemaIssue("error", f"Empty strategy in condition for '{table.name}.{col_name}'")
+                            SchemaIssue(
+                                "error",
+                                f"Empty strategy in condition for '{table.name}.{col_name}'",
+                            )
                         )
                     elif cond.strategy not in known_strategies():
                         issues.append(
@@ -218,8 +236,34 @@ def run_preflight(
                 actual_type = table_cols.get(col_name)
                 if actual_type is None:
                     issues.append(
-                        SchemaIssue("error", f"Column '{table.name}.{col_name}' not found")
+                        SchemaIssue(
+                            "error", f"Column '{table.name}.{col_name}' not found"
+                        )
                     )
+                elif rule.array:
+                    # Expect ARRAY with text-compatible element type
+                    if not actual_type.startswith("ARRAY:"):
+                        issues.append(
+                            SchemaIssue(
+                                "error",
+                                f"Column '{table.name}.{col_name}' is type '{actual_type}', expected ARRAY type (array: true is set)",
+                            )
+                        )
+                    else:
+                        element_type = actual_type[len("ARRAY:") :]
+                        if element_type not in (
+                            "text",
+                            "varchar",
+                            "character varying",
+                            "citext",
+                            "character",
+                        ):
+                            issues.append(
+                                SchemaIssue(
+                                    "error",
+                                    f"Column '{table.name}.{col_name}' has array element type '{element_type}', expected text-compatible element",
+                                )
+                            )
                 elif actual_type not in (
                     "text",
                     "character varying",
@@ -269,15 +313,11 @@ def run_preflight(
     # Check pgcrypto
     cursor.execute("SELECT 1 FROM pg_extension WHERE extname = 'pgcrypto'")
     if cursor.fetchone() is None:
-        issues.append(
-            SchemaIssue("error", "pgcrypto extension is not installed")
-        )
+        issues.append(SchemaIssue("error", "pgcrypto extension is not installed"))
 
     suspicious = _check_uncovered(schema_columns, policy)
     if suspicious:
-        msg = (
-            f"Suspicious uncovered PII columns: {', '.join(f'{t}.{c}' for t, c in suspicious)}"
-        )
+        msg = f"Suspicious uncovered PII columns: {', '.join(f'{t}.{c}' for t, c in suspicious)}"
         if uncovered_pii_mode == "fail":
             issues.append(SchemaIssue("error", msg))
         else:

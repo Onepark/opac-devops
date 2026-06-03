@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import typing as t
 
 from .sanitizer_names import first_names, last_names
 from .sanitizer_policy import (
     ColumnRule,
     SanitizationPolicy,
     TablePolicy,
-    known_strategies,
 )
 
 SCHEMA = "restore_sanitizer"
@@ -15,7 +13,7 @@ SCHEMA = "restore_sanitizer"
 
 def _quote_ident(name: str) -> str:
     """Quote a PostgreSQL identifier, escaping embedded double quotes."""
-    return f'"{name.replace("\"", "\"\"")}"'
+    return f'"{name.replace('"', '""')}"'
 
 
 def _quote_literal(value: str) -> str:
@@ -125,7 +123,9 @@ def fn_phone_fr() -> str:
 
 
 def fn_first_name() -> str:
-    return _gen_fn("anon_first_name", strategy_value_expr("value", "salt", "first_name"))
+    return _gen_fn(
+        "anon_first_name", strategy_value_expr("value", "salt", "first_name")
+    )
 
 
 def fn_last_name() -> str:
@@ -133,11 +133,16 @@ def fn_last_name() -> str:
 
 
 def fn_company_name() -> str:
-    return _gen_fn("anon_company_name", strategy_value_expr("value", "salt", "company_name"))
+    return _gen_fn(
+        "anon_company_name", strategy_value_expr("value", "salt", "company_name")
+    )
 
 
 def fn_license_plate_fr() -> str:
-    return _gen_fn("anon_license_plate_fr", strategy_value_expr("value", "salt", "license_plate_fr"))
+    return _gen_fn(
+        "anon_license_plate_fr",
+        strategy_value_expr("value", "salt", "license_plate_fr"),
+    )
 
 
 def fn_iban_fr() -> str:
@@ -152,7 +157,9 @@ def fn_national_identifier_fr() -> str:
 
 
 def fn_text_token() -> str:
-    return _gen_fn("anon_text_token", strategy_value_expr("value", "salt", "text_token"))
+    return _gen_fn(
+        "anon_text_token", strategy_value_expr("value", "salt", "text_token")
+    )
 
 
 def _gen_fn(fn_name: str, body_expr: str) -> str:
@@ -197,9 +204,12 @@ _FN_MAP: dict[str, str] = {
 }
 
 
-def column_update_expr(column: str, strategy: str) -> str:
+def column_update_expr(column: str, strategy: str, is_array: bool = False) -> str:
     fn = _FN_MAP[strategy]
     quoted = _quote_ident(column)
+    if is_array:
+        # Apply strategy to each element: ARRAY(SELECT fn(elem, salt) FROM unnest(col))
+        return f"{quoted} = ARRAY(SELECT {fn}(elem::text, %(salt)s) FROM unnest({quoted}) AS elem)"
     return f"{quoted} = {fn}({quoted}::text, %(salt)s)"
 
 
@@ -258,7 +268,7 @@ def generate_update_sql(
                 )
         elif rule.is_normal():
             statements.append(
-                f"UPDATE {qualified} SET {column_update_expr(col_name, rule.strategy)}"
+                f"UPDATE {qualified} SET {column_update_expr(col_name, rule.strategy, rule.array)}"
             )
 
     return statements
@@ -281,7 +291,6 @@ def generate_batched_update_sql(
 ) -> list[str]:
     base = generate_update_sql(policy, table)
     key = _quote_ident(table.batch.key)
-    batch_filter = f" AND ({key} BETWEEN %(lo)s AND %(hi)s"
     result: list[str] = []
     for stmt in base:
         where_idx = stmt.find(" WHERE ")
@@ -290,7 +299,7 @@ def generate_batched_update_sql(
                 stmt[:where_idx]
                 + f" WHERE ({key} BETWEEN %(lo)s AND %(hi)s)"
                 + " AND "
-                + stmt[where_idx + 7:]
+                + stmt[where_idx + 7 :]
             )
         else:
             stmt = stmt + f" WHERE ({key} BETWEEN %(lo)s AND %(hi)s)"
@@ -314,6 +323,15 @@ def collision_check_sql(
     strategy = rule.strategy
     if not strategy:
         return None
+    if rule.array:
+        # Unnest array elements and check for collisions across all elements
+        generated = strategy_value_expr("elem::text", "%(salt)s", strategy)
+        return (
+            f"SELECT {generated} AS generated, COUNT(*) "
+            f"FROM {qualified}, unnest({col_q}) AS elem "
+            f"WHERE {col_q} IS NOT NULL "
+            f"GROUP BY generated HAVING COUNT(*) > 1 LIMIT 1"
+        )
     generated = strategy_value_expr(f"{col_q}::text", "%(salt)s", strategy)
     return (
         f"SELECT {generated} AS generated, COUNT(*) "
@@ -359,6 +377,15 @@ def verification_sql(
         return results
 
     if rule.is_normal():
+        if rule.array:
+            # Verify each unnested array element
+            return [
+                f"SELECT {_quote_literal(f'{table.name}.{column}')} AS target, "
+                f"COUNT(*) AS checked, "
+                f"COALESCE(SUM(CASE WHEN NOT {SCHEMA}.verify_{rule.strategy}(elem::text) THEN 1 ELSE 0 END), 0) AS failed "
+                f"FROM {qualified}, unnest({col_q}) AS elem "
+                f"WHERE {col_q} IS NOT NULL"
+            ]
         return [
             f"SELECT {_quote_literal(f'{table.name}.{column}')} AS target, "
             f"COUNT(*) AS checked, "

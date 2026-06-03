@@ -219,7 +219,9 @@ def run_execution(
     results: list[TableExecutionResult] = []
     with ThreadPoolExecutor(max_workers=executor_max) as executor:
         futures = {
-            executor.submit(_execute_table, conn_factory, policy, table, salt): table.name
+            executor.submit(
+                _execute_table, conn_factory, policy, table, salt
+            ): table.name
             for table in policy.tables
         }
         for future in as_completed(futures):

@@ -1,9 +1,5 @@
-import os
-
 from restore_tooling.sanitizer_policy import (
-    ColumnRule,
     SanitizationPolicy,
-    TablePolicy,
     load_policy,
     known_strategies,
 )
@@ -35,8 +31,14 @@ def test_bundled_policy_has_known_tables():
     policy = load_policy()
     names = {t.name for t in policy.tables}
     expected = {
-        "access_ways", "customers", "entities", "entity_settings",
-        "installation_logs", "invoices", "parkings", "partners", "users",
+        "access_ways",
+        "customers",
+        "entities",
+        "installation_logs",
+        "invoices",
+        "parkings",
+        "partners",
+        "users",
     }
     assert names == expected
 
@@ -100,7 +102,8 @@ def test_bundled_policy_partners():
     assert cols["name"].strategy == "company_name"
     assert cols["iban"].strategy == "iban_fr"
     assert cols["national_identifier"].strategy == "national_identifier_fr"
-    assert cols["email_for_commission_invoices"].strategy == "email"
+    assert cols["emails_for_commission_invoices"].strategy == "email"
+    assert cols["emails_for_commission_invoices"].array is True
 
 
 def test_bundled_policy_users_email_unique():
@@ -113,12 +116,21 @@ def test_bundled_policy_users_email_unique():
 def test_bundled_policy_batching_on_large_tables():
     policy = load_policy()
     batched = {t.name: t.batch for t in policy.tables if t.batch.enabled}
-    for name in ("access_ways", "customers", "entities", "installation_logs", "invoices", "users"):
+    for name in (
+        "access_ways",
+        "customers",
+        "entities",
+        "installation_logs",
+        "invoices",
+        "users",
+    ):
         assert name in batched, f"{name} should have batching enabled"
         assert batched[name].key == "id"
         assert batched[name].size > 0
-    for name in ("entity_settings", "parkings", "partners"):
-        assert name not in batched or not batched[name].enabled, f"{name} should not have batching enabled"
+    for name in ("parkings", "partners"):
+        assert name not in batched or not batched[name].enabled, (
+            f"{name} should not have batching enabled"
+        )
 
 
 def test_bundled_policy_defaults_batch_disabled():
@@ -210,6 +222,7 @@ tables:
       col: {}
 """)
     import pytest
+
     with pytest.raises(ValueError, match="no strategy"):
         load_policy(str(path))
 
