@@ -26,3 +26,4 @@ ENV PYTHONUNBUFFERED=1
 
 USER nonroot
 ENTRYPOINT ["python", "-m", "restore_tooling.sanitizer"]
+CMD ["sanitize"]

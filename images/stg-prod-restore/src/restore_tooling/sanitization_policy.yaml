@@ -1,0 +1,122 @@
+version: 1
+
+defaults:
+  schema: public
+  batch:
+    enabled: false
+    size: 10000
+
+tables:
+  access_ways:
+    batch:
+      enabled: true
+      key: id
+      size: 10000
+    columns:
+      desc:
+        strategy_by_condition:
+          - where: "type = 'license_plate'"
+            strategy: license_plate_fr
+          - where: "type = 'phone'"
+            strategy: phone_fr
+
+  customers:
+    batch:
+      enabled: true
+      key: id
+      size: 10000
+    columns:
+      email:
+        strategy: email
+        unique: true
+      firstname:
+        strategy: first_name
+      lastname:
+        strategy: last_name
+      phone:
+        strategy: phone_fr
+
+  entities:
+    batch:
+      enabled: true
+      key: id
+      size: 10000
+    columns:
+      name:
+        strategy: company_name
+      contact_info:
+        type: jsonb
+        keys:
+          email:
+            strategy: email
+          phone:
+            strategy: phone_fr
+
+  installation_logs:
+    batch:
+      enabled: true
+      key: id
+      size: 10000
+    columns:
+      desc:
+        strategy: text_token
+
+  invoices:
+    batch:
+      enabled: true
+      key: id
+      size: 5000
+    columns:
+      customer_email:
+        strategy: email
+      customer_firstname:
+        strategy: first_name
+      customer_lastname:
+        strategy: last_name
+      pdf_creation_data:
+        type: jsonb
+        keys:
+          customer_email:
+            strategy: email
+          customer_firstname:
+            strategy: first_name
+          customer_lastname:
+            strategy: last_name
+
+  parkings:
+    columns:
+      email:
+        strategy: email
+      firstname:
+        strategy: first_name
+      lastname:
+        strategy: last_name
+
+  partners:
+    columns:
+      email_for_commission_invoices:
+        strategy: email
+      iban:
+        strategy: iban_fr
+      name:
+        strategy: company_name
+      national_identifier:
+        strategy: national_identifier_fr
+
+  users:
+    batch:
+      enabled: true
+      key: id
+      size: 10000
+    columns:
+      email:
+        strategy: email
+        unique: true
+      firstname:
+        strategy: first_name
+      lastname:
+        strategy: last_name
+      phone:
+        strategy: phone_fr
+      national_identifier:
+        strategy: national_identifier_fr
