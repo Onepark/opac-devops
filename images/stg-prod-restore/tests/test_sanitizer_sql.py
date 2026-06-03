@@ -171,5 +171,5 @@ def test_collision_check_sql_generated_inline_for_unique_column():
     sql = collision_check_sql(policy, customers, "email", rule)
     assert sql is not None
     assert "anon_email" not in sql
-    assert "GROUP BY generated HAVING COUNT(*) > 1" in sql
+    assert "GROUP BY generated HAVING COUNT(DISTINCT" in sql
     assert "%(salt)s" in sql

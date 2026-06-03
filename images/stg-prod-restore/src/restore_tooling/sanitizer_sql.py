@@ -327,16 +327,16 @@ def collision_check_sql(
         # Unnest array elements and check for collisions across all elements
         generated = strategy_value_expr("elem::text", "%(salt)s", strategy)
         return (
-            f"SELECT {generated} AS generated, COUNT(*) "
+            f"SELECT {generated} AS generated, COUNT(DISTINCT elem) "
             f"FROM {qualified}, unnest({col_q}) AS elem "
             f"WHERE {col_q} IS NOT NULL "
-            f"GROUP BY generated HAVING COUNT(*) > 1 LIMIT 1"
+            f"GROUP BY generated HAVING COUNT(DISTINCT elem) > 1 LIMIT 1"
         )
     generated = strategy_value_expr(f"{col_q}::text", "%(salt)s", strategy)
     return (
-        f"SELECT {generated} AS generated, COUNT(*) "
+        f"SELECT {generated} AS generated, COUNT(DISTINCT {col_q}) "
         f"FROM {qualified} WHERE {col_q} IS NOT NULL "
-        f"GROUP BY generated HAVING COUNT(*) > 1 LIMIT 1"
+        f"GROUP BY generated HAVING COUNT(DISTINCT {col_q}) > 1 LIMIT 1"
     )
 
 
