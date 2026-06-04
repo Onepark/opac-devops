@@ -46,17 +46,13 @@ def _validate_env(env: dict[str, str]) -> None:
 
 def _conn_factory(env: dict[str, str], app_secret) -> Callable:
     """Return a zero-arg callable that opens a new DB connection."""
-    from contextlib import closing
-
     def _open():
-        return closing(
-            connect(
-                env["DB_HOST"],
-                int(env["DB_PORT"]),
-                app_secret.database,
-                app_secret.username,
-                app_secret.password,
-            )
+        return connect(
+            env["DB_HOST"],
+            int(env["DB_PORT"]),
+            app_secret.database,
+            app_secret.username,
+            app_secret.password,
         )
 
     return _open
