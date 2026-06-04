@@ -63,12 +63,14 @@ def test_generate_update_sql_normal_column():
     customers = policy.find_table("customers")
     assert customers is not None
     updates = generate_update_sql(policy, customers)
-    # Should have one UPDATE per configured column
-    assert len(updates) == 4  # email, firstname, lastname, phone
-    for stmt in updates:
-        assert stmt.startswith("UPDATE")
-        assert "public" in stmt or ".customers" in stmt
-        assert "%(salt)s" in stmt
+    # Normal columns are collapsed into a single UPDATE statement
+    assert len(updates) == 1
+    stmt = updates[0]
+    assert stmt.startswith("UPDATE")
+    assert "public" in stmt or ".customers" in stmt
+    assert "%(salt)s" in stmt
+    for col in ('"email"', '"firstname"', '"lastname"', '"phone"'):
+        assert col in stmt
 
 
 def test_generate_update_sql_jsonb():
@@ -104,15 +106,15 @@ def test_generate_update_sql_invoices_both():
     inv = policy.find_table("invoices")
     assert inv is not None
     updates = generate_update_sql(policy, inv)
-    # Normal: customer_email, customer_firstname, customer_lastname + JSONB: pdf_creation_data
-    assert len(updates) == 4
+    # Normal columns collapsed into one UPDATE + one JSONB UPDATE
+    assert len(updates) == 2
     jsonb_updates = [u for u in updates if "pdf_creation_data" in u]
     assert len(jsonb_updates) == 1
     assert "jsonb_set" in jsonb_updates[0]
-    normal_updates = [
-        u for u in updates if "customer_" in u and "pdf_creation_data" not in u
-    ]
-    assert len(normal_updates) == 3
+    normal_updates = [u for u in updates if "pdf_creation_data" not in u]
+    assert len(normal_updates) == 1
+    for col in ("customer_email", "customer_firstname", "customer_lastname"):
+        assert col in normal_updates[0]
 
 
 def test_generate_update_sql_quotes_table_identifier():

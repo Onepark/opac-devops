@@ -248,28 +248,39 @@ def generate_update_sql(
     policy: SanitizationPolicy,
     table: TablePolicy,
 ) -> list[str]:
-    statements: list[str] = []
     qualified = _qualified(policy.schema_name, table.name)
+
+    # Collapse all plain ("normal") column rewrites into a SINGLE UPDATE so each
+    # batch scans the table once instead of once per column. This cuts table
+    # scans, WAL volume and per-row foreign-key trigger firings by Nx (e.g. 3x
+    # for parkings) and was a primary cause of batches exceeding statement_timeout.
+    normal_assignments: list[str] = []
+    other_statements: list[str] = []
 
     for col_name, rule in table.columns:
         if rule.is_jsonb():
             if rule.jsonb_keys:
                 col_q = _quote_ident(col_name)
-                statements.append(
+                other_statements.append(
                     f"UPDATE {qualified} SET {jsonb_column_update_expr(col_name, rule)} WHERE {col_q} IS NOT NULL"
                 )
         elif rule.is_conditional():
             for condition in rule.strategy_by_condition:
                 col_q = _quote_ident(col_name)
                 fn = _FN_MAP[condition.strategy]
-                statements.append(
+                other_statements.append(
                     f"UPDATE {qualified} SET {col_q} = {fn}({col_q}::text, %(salt)s)"
                     f" WHERE {condition.where}"
                 )
         elif rule.is_normal():
-            statements.append(
-                f"UPDATE {qualified} SET {column_update_expr(col_name, rule.strategy, rule.array)}"
+            normal_assignments.append(
+                column_update_expr(col_name, rule.strategy, rule.array)
             )
+
+    statements: list[str] = []
+    if normal_assignments:
+        statements.append(f"UPDATE {qualified} SET {', '.join(normal_assignments)}")
+    statements.extend(other_statements)
 
     return statements
 

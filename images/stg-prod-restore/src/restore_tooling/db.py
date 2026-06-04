@@ -73,6 +73,15 @@ def connect(
         "password": password,
         "sslmode": sslmode,
         "connect_timeout": int(os.environ.get("DB_CONNECT_TIMEOUT_SECONDS", "30")),
+        # TCP keepalives so a silently-dropped RDS connection cannot leave the
+        # client blocked forever in recv(). statement_timeout is enforced
+        # server-side and is useless if the socket itself is dead.
+        "keepalives": 1,
+        "keepalives_idle": int(os.environ.get("DB_KEEPALIVES_IDLE_SECONDS", "30")),
+        "keepalives_interval": int(
+            os.environ.get("DB_KEEPALIVES_INTERVAL_SECONDS", "10")
+        ),
+        "keepalives_count": int(os.environ.get("DB_KEEPALIVES_COUNT", "3")),
     }
     sslrootcert = os.environ.get("DB_SSLROOTCERTS", "").strip()
     if sslrootcert:
@@ -81,19 +90,51 @@ def connect(
     conn = psycopg2.connect(**kwargs)
     try:
         if configure_session:
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    "SET statement_timeout = %s",
-                    (os.environ.get("DB_STATEMENT_TIMEOUT", "300000"),),
-                )
-                cursor.execute(
-                    "SET lock_timeout = %s",
-                    (os.environ.get("DB_LOCK_TIMEOUT", "30000"),),
-                )
-            conn.commit()
+            _configure_session(conn)
         yield conn
     finally:
         conn.close()
+
+
+def _truthy(value: str) -> bool:
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _configure_session(conn: psycopg2.extensions.connection) -> None:
+    with conn.cursor() as cursor:
+        cursor.execute(
+            "SET statement_timeout = %s",
+            (os.environ.get("DB_STATEMENT_TIMEOUT", "300000"),),
+        )
+        cursor.execute(
+            "SET lock_timeout = %s",
+            (os.environ.get("DB_LOCK_TIMEOUT", "30000"),),
+        )
+    conn.commit()
+
+    # Optionally disable FK/user triggers for the bulk anonymization run. This
+    # removes the per-row referential-integrity check overhead (the
+    # `SELECT 1 FROM customers ... FOR KEY SHARE` that was timing out). It is
+    # safe ONLY because the sanitizer never modifies key/FK columns and uses
+    # deterministic hashing, so referential integrity and joins are preserved.
+    # Requires the rds_superuser privilege; if the connecting role lacks it we
+    # log a warning and continue with triggers enabled rather than aborting.
+    if _truthy(os.environ.get("SANITIZER_DISABLE_TRIGGERS", "")):
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute("SET session_replication_role = 'replica'")
+            conn.commit()
+            logging.info(
+                "session_replication_role set to 'replica' (triggers disabled "
+                "for bulk anonymization)"
+            )
+        except psycopg2.Error as exc:
+            conn.rollback()
+            logging.warning(
+                "Could not set session_replication_role=replica (%s); "
+                "continuing with triggers enabled",
+                exc,
+            )
 
 
 def postgres_major_from_server_version(server_version: int) -> str:

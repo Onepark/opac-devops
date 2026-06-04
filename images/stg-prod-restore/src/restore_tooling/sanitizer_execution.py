@@ -217,7 +217,8 @@ def run_execution(
     # Run tables in parallel
     executor_max = max(1, max_workers)
     results: list[TableExecutionResult] = []
-    with ThreadPoolExecutor(max_workers=executor_max) as executor:
+    executor = ThreadPoolExecutor(max_workers=executor_max)
+    try:
         futures = {
             executor.submit(
                 _execute_table, conn_factory, policy, table, salt
@@ -227,6 +228,19 @@ def run_execution(
         for future in as_completed(futures):
             result = future.result()
             results.append(result)
+            # Fail-fast: one table failing previously left the remaining workers
+            # grinding for hours while Step Functions polled a "RUNNING" task with
+            # no logs. Abort the run as soon as any table fails.
+            if result.status == "failed":
+                logging.error(
+                    "Table %s failed; cancelling remaining sanitization tasks",
+                    result.table,
+                )
+                for pending in futures:
+                    pending.cancel()
+                break
+    finally:
+        executor.shutdown(wait=True, cancel_futures=True)
 
     duration = time.monotonic() - start
     failed = [r for r in results if r.status == "failed"]
