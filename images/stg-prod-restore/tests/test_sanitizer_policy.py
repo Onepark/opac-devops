@@ -122,15 +122,13 @@ def test_bundled_policy_batching_on_large_tables():
         "entities",
         "installation_logs",
         "invoices",
+        "parkings",
+        "partners",
         "users",
     ):
         assert name in batched, f"{name} should have batching enabled"
         assert batched[name].key == "id"
         assert batched[name].size > 0
-    for name in ("parkings", "partners"):
-        assert name not in batched or not batched[name].enabled, (
-            f"{name} should not have batching enabled"
-        )
 
 
 def test_bundled_policy_defaults_batch_disabled():

@@ -84,6 +84,10 @@ tables:
             strategy: last_name
 
   parkings:
+    batch:
+      enabled: true
+      key: id
+      size: 10000
     columns:
       email:
         strategy: email
@@ -93,6 +97,10 @@ tables:
         strategy: last_name
 
   partners:
+    batch:
+      enabled: true
+      key: id
+      size: 10000
     columns:
       emails_for_commission_invoices:
         strategy: email

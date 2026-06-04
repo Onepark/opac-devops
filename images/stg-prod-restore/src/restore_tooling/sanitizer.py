@@ -46,6 +46,7 @@ def _validate_env(env: dict[str, str]) -> None:
 
 def _conn_factory(env: dict[str, str], app_secret) -> Callable:
     """Return a zero-arg callable that opens a new DB connection."""
+
     def _open():
         return connect(
             env["DB_HOST"],

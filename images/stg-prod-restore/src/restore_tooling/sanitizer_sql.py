@@ -358,7 +358,7 @@ def verification_sql(
             key_lit = _quote_literal(key)
             results.append(
                 f"SELECT {_quote_literal(f'{table.name}.{column}.{key}')} AS target, "
-                f"COUNT(*) AS checked, "
+                f"COUNT(*) FILTER (WHERE {col_q} IS NOT NULL AND {col_q} ? {key_lit}) AS checked, "
                 f"COALESCE(SUM(CASE WHEN {col_q} IS NOT NULL AND {col_q} ? {key_lit} "
                 f"AND NOT {SCHEMA}.verify_{key_rule.strategy}(({col_q} ->> {key_lit})::text) THEN 1 ELSE 0 END), 0) AS failed "
                 f"FROM {qualified}"
@@ -370,7 +370,7 @@ def verification_sql(
         for condition in rule.strategy_by_condition:
             results.append(
                 f"SELECT {_quote_literal(f'{table.name}.{column} ({condition.strategy})')} AS target, "
-                f"COUNT(*) AS checked, "
+                f"COUNT({col_q}) AS checked, "
                 f"COALESCE(SUM(CASE WHEN {col_q} IS NOT NULL AND NOT {SCHEMA}.verify_{condition.strategy}({col_q}::text) THEN 1 ELSE 0 END), 0) AS failed "
                 f"FROM {qualified} WHERE {condition.where}"
             )
@@ -384,11 +384,11 @@ def verification_sql(
                 f"COUNT(*) AS checked, "
                 f"COALESCE(SUM(CASE WHEN NOT {SCHEMA}.verify_{rule.strategy}(elem::text) THEN 1 ELSE 0 END), 0) AS failed "
                 f"FROM {qualified}, unnest({col_q}) AS elem "
-                f"WHERE {col_q} IS NOT NULL"
+                f"WHERE {col_q} IS NOT NULL AND elem IS NOT NULL"
             ]
         return [
             f"SELECT {_quote_literal(f'{table.name}.{column}')} AS target, "
-            f"COUNT(*) AS checked, "
+            f"COUNT({col_q}) AS checked, "
             f"COALESCE(SUM(CASE WHEN {col_q} IS NOT NULL AND NOT {SCHEMA}.verify_{rule.strategy}({col_q}::text) THEN 1 ELSE 0 END), 0) AS failed "
             f"FROM {qualified}"
         ]
