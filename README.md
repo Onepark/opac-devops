@@ -138,6 +138,24 @@ Execs into a running ECS container via SSM `execute-command`. Interactively list
 ```bash
 mise run ecs-exec
 # or: uv run ecs_exec.py
+## stg_db.py
+
+Switches the `db.stg.onepark.dev` Route53 CNAME to the latest ready production-derived
+restore slot (the staging DB cutover). Reads slot state from the
+`opk-opac-stg-prod-restore-state` DynamoDB table, picks the slot with `readyForQa=true`
+and the latest `sourceSnapshotWeek` (ISO year/week, tie-broken on snapshot create
+time), moves the cutover, promotes the new active slot, demotes the previous one,
+and submits a fire-and-forget `DeleteDBInstance` for the previous active RDS.
+
+Audit-only — writes a `PROMOTION#<iso-week>` record to the same DynamoDB table.
+
+Requires the non-prod developer role to have `AmazonDynamoDBFullAccess` and the
+inline Route53 cutover policy attached (added in
+`envs/non-prod/shared/main.tf`).
+
+```bash
+mise run stg-db switch                 # or: uv run stg_db.py switch
+mise run stg-db -- switch --dry-run    # preview only, no AWS mutation
 ```
 
 | Option | Default | Description |
@@ -146,6 +164,9 @@ mise run ecs-exec
 | `--task`, `-t` | interactive list | ECS task ID |
 | `--container` | `api` | Container name |
 | `--command` | `/bin/sh` | Command to run inside the container |
+| `--dry-run` | `false` | Print the plan and exit without mutating anything |
+| `--requester` | `$USER` | Audit metadata: who is promoting |
+| `--reason` | `""` | Audit metadata: why are you promoting? |
 
 **Examples**
 
@@ -177,6 +198,23 @@ Oban.insert(OpacCore.Payments.Workers.AccountingReport.new(%{"period" => "monthl
 # Force a specific reference date (useful to report on past months with real data)
 Oban.insert(OpacCore.Payments.Workers.AccountingReport.new(%{"period" => "monthly", "today" => "2026-06-01"}))
 ```
+# Preview which slot would be promoted
+uv run stg_db.py switch --dry-run
+
+# Promote with a reason for the audit record
+uv run stg_db.py switch --reason "QA requested latest snapshot"
+
+# Audit trail lookup
+aws dynamodb get-item \
+  --table-name opk-opac-stg-prod-restore-state \
+  --key '{"pk": {"S": "PROMOTION#2026w23"}}'
+```
+
+If no slot is `readyForQa`, the script exits non-zero with
+`no slot is ready; trigger or wait for a reconcile`. The cutover is a no-op
+(exit 0) if the current Route53 target already points at the chosen slot.
+
+---
 
 ## Container images
 
