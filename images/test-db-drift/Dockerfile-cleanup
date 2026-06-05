@@ -18,11 +18,11 @@ RUN groupadd --system --gid 999 nonroot \
 WORKDIR /app
 
 COPY --from=builder /app/.venv .venv
-COPY lambda/step-rename-dance.py lambda/step-rename-dance.py
-COPY lambda/utils/ lambda/utils/
+COPY src/step-cleanup-on-failure.py src/step-cleanup-on-failure.py
+COPY src/utils/aws.py src/utils/db.py src/utils/__init__.py /app/.venv/lib/python3.12/site-packages/utils/
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
 
 USER nonroot
-CMD ["python", "lambda/step-rename-dance.py"]
+CMD ["python", "src/step-cleanup-on-failure.py"]

@@ -40,7 +40,7 @@ wheels = [
 ]
 
 [[package]]
-name = "opac-devops"
+name = "opac-test-db-drift-images"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

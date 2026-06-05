@@ -18,11 +18,11 @@ RUN groupadd --system --gid 999 nonroot \
 WORKDIR /app
 
 COPY --from=builder /app/.venv .venv
-COPY lambda/step-drifting.py lambda/step-drifting.py
-COPY lambda/utils/ lambda/utils/
+COPY src/step-drifting.py src/step-drifting.py
+COPY src/utils/aws.py src/utils/db.py src/utils/__init__.py /app/.venv/lib/python3.12/site-packages/utils/
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
 
 USER nonroot
-CMD ["python", "lambda/step-drifting.py"]
+CMD ["python", "src/step-drifting.py"]

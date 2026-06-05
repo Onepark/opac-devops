@@ -35,29 +35,26 @@ assume onepark-nonprod   # or onepark-prod
 
 ---
 
-## trigger_step_function.py
+## test_db.py
 
-Triggers the data step function (ephemeral RDS restore → optional date drifting → optional
-anonymisation → rename dance). Fetches DB credentials from Doppler automatically.
+Triggers the test-db-drift Step Function (ephemeral RDS restore from own-account
+manual snapshot → date drifting → rename dance). Fetches DB credentials from
+Doppler (`opac-data-step-function` / `int` config).
 
 ```bash
-mise run trigger
-# or: uv run trigger_step_function.py
+uv run test_db.py
 ```
 
 **Interactive flow**
 
-1. **Operation** — `drift` or `anonymisation`
-   - `drift` → `drifting=true`, `anonymisation=false`, Doppler config `int`
-   - `anonymisation` → `drifting=false`, `anonymisation=true`, Doppler config `prod`
-2. **Snapshot** — pick from own-account snapshots (drift) or shared snapshots (anonymisation)
-3. **Target RDS** — pick from instance list (filtered to `test`/`stg` instances)
+1. **Snapshot** — pick from own-account PostgreSQL manual snapshots (filtered to
+   those with a date in the name for drift computation)
+2. **Target RDS** — pick from instance list (filtered to `test` instances)
 
 All parameters can be passed as flags to skip the interactive prompts:
 
 | Option | Default | Description |
 |---|---|---|
-| `--operation`, `-o` | prompted | Operation: `drift` or `anonymisation` |
 | `--snapshot-arn`, `-s` | interactive list | ARN of the RDS snapshot to restore from |
 | `--target-rds-instance-id`, `-t` | interactive list | Target RDS instance ID |
 | `--watch` / `--no-watch` | `--watch` | Stream execution progress after triggering |
@@ -68,26 +65,16 @@ All parameters can be passed as flags to skip the interactive prompts:
 
 ```bash
 # Fully interactive
-mise run trigger
+uv run test_db.py
 
-# Non-interactive drift
-uv run trigger_step_function.py \
-  --operation drift \
+# Non-interactive
+uv run test_db.py \
   --snapshot-arn arn:aws:rds:eu-west-3:418484240945:snapshot:golden-snapshot-20260305-postgres-18 \
-  --target-rds-instance-id db-test2
-
-# Non-interactive anonymisation
-uv run trigger_step_function.py \
-  --operation anonymisation \
-  --snapshot-arn arn:aws:rds:eu-west-3:123456789012:snapshot:shared-snapshot-20260305 \
-  --target-rds-instance-id db-test2
+  --target-rds-instance-id opk-opac-test2
 
 # Dry-run to inspect the payload
-uv run trigger_step_function.py --operation drift --dry-run
+uv run test_db.py --dry-run
 ```
-
-If the execution fails, the CLI will prompt to clean up the stale SSM context
-(`/opac/int/step_function/context`) automatically.
 
 ---
 
@@ -220,12 +207,15 @@ If no slot is `readyForQa`, the script exits non-zero with
 
 Image build contexts live under `images/`:
 
-- `images/data-step-function/` — drift/anonymisation/rename-dance images and ASL.
+- `images/test-db-drift/` — date-drifting/rename-dance/cleanup images and ASL (deployed via Terraform).
 - `images/stg-prod-restore/` — staging production-derived restore tooling images used by the Terraform restore stack.
 
 Build and push one image at a time:
 
 ```bash
+images/build-push.sh test-db-drift-drifting
+images/build-push.sh test-db-drift-rename-dance
+images/build-push.sh test-db-drift-cleanup
 images/build-push.sh stg-prod-restore-db-admin
 images/build-push.sh stg-prod-restore-sanitizer
 ```

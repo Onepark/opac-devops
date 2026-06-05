@@ -10,10 +10,9 @@ Builds and pushes one image to ECR. If tag is omitted, the current git SHA is us
 Images:
   stg-prod-restore-db-admin
   stg-prod-restore-sanitizer
-  data-step-function-anonymisation
-  data-step-function-cleanup
-  data-step-function-drifting
-  data-step-function-rename-dance
+  test-db-drift-cleanup
+  test-db-drift-drifting
+  test-db-drift-rename-dance
 
 Environment:
   ECR_REGISTRY  default: 884080474326.dkr.ecr.eu-west-3.amazonaws.com
@@ -47,25 +46,20 @@ case "${image}" in
     dockerfile="${context}/Dockerfile-sanitizer"
     image_tag="stg-prod-restore-sanitizer-${tag}"
     ;;
-  data-step-function-anonymisation)
-    context="${repo_root}/images/data-step-function"
-    dockerfile="${context}/Dockerfile-anonymisation"
-    image_tag="step-anonymisation-${tag}"
-    ;;
-  data-step-function-cleanup)
-    context="${repo_root}/images/data-step-function"
+  test-db-drift-cleanup)
+    context="${repo_root}/images/test-db-drift"
     dockerfile="${context}/Dockerfile-cleanup"
-    image_tag="step-cleanup-${tag}"
+    image_tag="test-db-drift-cleanup-${tag}"
     ;;
-  data-step-function-drifting)
-    context="${repo_root}/images/data-step-function"
+  test-db-drift-drifting)
+    context="${repo_root}/images/test-db-drift"
     dockerfile="${context}/Dockerfile-drifting"
-    image_tag="step-drifting-${tag}"
+    image_tag="test-db-drift-drifting-${tag}"
     ;;
-  data-step-function-rename-dance)
-    context="${repo_root}/images/data-step-function"
+  test-db-drift-rename-dance)
+    context="${repo_root}/images/test-db-drift"
     dockerfile="${context}/Dockerfile-rename-dance"
-    image_tag="step-rename-dance-${tag}"
+    image_tag="test-db-drift-rename-dance-${tag}"
     ;;
   -h|--help|help)
     usage

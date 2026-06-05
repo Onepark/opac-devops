@@ -1,7 +1,7 @@
 [project]
-name = "opac-devops"
+name = "opac-test-db-drift-images"
 version = "0.1.0"
-description = "Add your description here"
+description = "Database drift tooling images"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

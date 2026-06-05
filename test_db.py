@@ -7,20 +7,12 @@
 #   "rich>=13",
 # ]
 # ///
-"""CLI to trigger the OPAC data step function (drifting / anonymisation).
-
-Interactive flow
-----------------
-1. Operation  — drift or anonymisation
-               drift         → drifting=True,  anonymisation=False, Doppler config=int
-               anonymisation → drifting=False, anonymisation=True,  Doppler config=prod
-2. Snapshot   — picked from own-account snapshots (drift) or shared snapshots (anonymisation)
-3. Target RDS — picked from instance list
-"""
+"""Trigger the test db date drifting process"""
 
 from __future__ import annotations
 
 import json
+import re
 import signal
 import subprocess
 import threading
@@ -35,25 +27,20 @@ from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
 app = typer.Typer(
-    help="Trigger the OPAC data step function (date drifting / anonymisation).",
+    help="Trigger the test db date drifting process.",
     no_args_is_help=False,
 )
 console = Console()
 
 AWS_REGION = "eu-west-3"
 STATE_MACHINE_ARN = (
-    "arn:aws:states:eu-west-3:418484240945:stateMachine:"
-    "drift-anonymisation-state-machine"
+    "arn:aws:states:eu-west-3:418484240945:stateMachine:opk-opac-test-db-drift-workflow"
 )
-ECS_CLUSTER_ARN = "arn:aws:ecs:eu-west-3:418484240945:cluster/opk-opac-int-ecs-cluster"
+ECS_CLUSTER_ARN = (
+    "arn:aws:ecs:eu-west-3:418484240945:cluster/opk-opac-test-db-drift-jobs"
+)
 DOPPLER_PROJECT = "opac-data-step-function"
-SSM_CONTEXT_PARAM = "/opac/int/step_function/context"
-
-# Doppler config inferred from operation
-_OPERATION_DOPPLER_CONFIG = {
-    "drift": "int",
-    "anonymisation": "prod",
-}
+DOPPLER_CONFIG = "int"
 
 
 # ---------------------------------------------------------------------------
@@ -61,8 +48,8 @@ _OPERATION_DOPPLER_CONFIG = {
 # ---------------------------------------------------------------------------
 
 
-def _fetch_doppler_secrets(config: str) -> dict[str, str]:
-    """Download secrets from Doppler for the given config (int | prod)."""
+def _fetch_doppler_secrets() -> dict[str, str]:
+    """Download secrets from Doppler for the int config."""
     try:
         result = subprocess.run(
             [
@@ -75,7 +62,7 @@ def _fetch_doppler_secrets(config: str) -> dict[str, str]:
                 "--project",
                 DOPPLER_PROJECT,
                 "--config",
-                config,
+                DOPPLER_CONFIG,
             ],
             capture_output=True,
             text=True,
@@ -99,57 +86,109 @@ def _fetch_doppler_secrets(config: str) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
-def _select_snapshot(shared: bool) -> str:
-    """List RDS snapshots and let the user pick one. Returns the snapshot ARN."""
-    label = "shared with this account" if shared else "own-account manual"
-    console.print(f"\nFetching {label} snapshots…")
+def _extract_date_from_snapshot_name(name: str) -> str | None:
+    """Extract YYYYMMDD date from a snapshot name. Returns formatted date or None."""
+    match = re.search(r"(\d{4})(\d{2})(\d{2})", name)
+    if match:
+        return f"{match.group(1)}-{match.group(2)}-{match.group(3)}"
+    return None
+
+
+def _select_snapshot() -> str:
+    """List own-account manual PostgreSQL snapshots and let the user pick one.
+
+    Only shows snapshots compatible with the date-drift workflow:
+    - Engine must be postgres
+    - Snapshot name must contain a YYYYMMDD date (required by step-drifting.py
+      to compute delta_days), or have a SnapshotCreateTime as fallback
+    """
+    console.print("\nFetching own-account manual snapshots…")
     rds = boto3.client("rds", region_name=AWS_REGION)
 
     try:
         paginator = rds.get_paginator("describe_db_snapshots")
-        if shared:
-            pages = paginator.paginate(SnapshotType="shared", IncludeShared=True)
-        else:
-            pages = paginator.paginate(SnapshotType="manual")
-        snapshots = [snap for page in pages for snap in page["DBSnapshots"]]
+        all_snapshots = [
+            snap
+            for page in paginator.paginate(SnapshotType="manual")
+            for snap in page["DBSnapshots"]
+        ]
     except Exception as exc:
         console.print(f"[bold red]Error fetching snapshots:[/bold red] {exc}")
         raise typer.Exit(1)
 
+    # Filter: PostgreSQL only + must have a date source for drift computation
+    compatible = []
+    skipped_no_date = 0
+    skipped_not_pg = 0
+    for snap in all_snapshots:
+        if snap.get("Engine", "") != "postgres":
+            skipped_not_pg += 1
+            continue
+        name = snap["DBSnapshotIdentifier"]
+        has_name_date = _extract_date_from_snapshot_name(name) is not None
+        has_create_time = snap.get("SnapshotCreateTime") is not None
+        if not has_name_date and not has_create_time:
+            skipped_no_date += 1
+            continue
+        compatible.append(snap)
+
+    if skipped_not_pg:
+        console.print(
+            f"[dim]  Filtered out {skipped_not_pg} non-PostgreSQL snapshot(s).[/dim]"
+        )
+    if skipped_no_date:
+        console.print(
+            f"[dim]  Filtered out {skipped_no_date} snapshot(s) with no extractable date "
+            "(required for drift computation).[/dim]"
+        )
+
     # Newest first, cap at 30 to keep the list manageable
-    snapshots.sort(
+    compatible.sort(
         key=lambda s: s.get(
             "SnapshotCreateTime", datetime.min.replace(tzinfo=timezone.utc)
         ),
         reverse=True,
     )
-    snapshots = snapshots[:30]
+    compatible = compatible[:30]
 
-    if not snapshots:
-        console.print("[yellow]No snapshots found.[/yellow]")
+    if not compatible:
+        console.print("[yellow]No compatible snapshots found.[/yellow]")
         return Prompt.ask("Snapshot ARN")
 
     table = Table(
         show_header=True,
         header_style="bold",
-        title=f"Available Snapshots ({label})",
+        title="Available Snapshots",
     )
     table.add_column("#", style="dim", width=4, justify="right")
     table.add_column("Snapshot ID", style="cyan", no_wrap=True)
-    table.add_column("DB Instance")
+    table.add_column("Drift Date", style="green")
     table.add_column("Engine")
     table.add_column("Created")
     table.add_column("Status")
 
-    for i, snap in enumerate(snapshots, 1):
+    for i, snap in enumerate(compatible, 1):
+        name = snap["DBSnapshotIdentifier"]
+        name_date = _extract_date_from_snapshot_name(name)
+        drift_date = (
+            name_date
+            if name_date
+            else (
+                snap.get("SnapshotCreateTime").strftime("%Y-%m-%d")
+                if snap.get("SnapshotCreateTime")
+                else "—"
+            )
+        )
+        date_style = "green" if name_date else "yellow"
+        date_hint = "" if name_date else " ⚠ fallback"
         created = snap.get("SnapshotCreateTime")
         created_str = created.strftime("%Y-%m-%d %H:%M") if created else "—"
         status = snap.get("Status", "")
         status_style = "green" if status == "available" else "yellow"
         table.add_row(
             str(i),
-            snap["DBSnapshotIdentifier"],
-            snap.get("DBInstanceIdentifier", ""),
+            name,
+            f"[{date_style}]{drift_date}{date_hint}[/{date_style}]",
             f"{snap.get('Engine', '')} {snap.get('EngineVersion', '')}",
             created_str,
             f"[{status_style}]{status}[/{status_style}]",
@@ -157,11 +196,20 @@ def _select_snapshot(shared: bool) -> str:
 
     console.print(table)
 
+    if any(
+        _extract_date_from_snapshot_name(s["DBSnapshotIdentifier"]) is None
+        for s in compatible
+    ):
+        console.print(
+            "[dim]⚠ Snapshots marked 'fallback' use SnapshotCreateTime instead of "
+            "a date in the name — drift delta may be less precise.[/dim]\n"
+        )
+
     choice = Prompt.ask(
         "Select snapshot",
-        choices=[str(i) for i in range(1, len(snapshots) + 1)],
+        choices=[str(i) for i in range(1, len(compatible) + 1)],
     )
-    return snapshots[int(choice) - 1]["DBSnapshotArn"]
+    return compatible[int(choice) - 1]["DBSnapshotArn"]
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +228,7 @@ def _select_rds_instance() -> str:
             inst
             for page in paginator.paginate()
             for inst in page["DBInstances"]
-            if any(k in inst["DBInstanceIdentifier"] for k in ("test", "stg"))
+            if any(k in inst["DBInstanceIdentifier"] for k in ("test",))
         ]
     except Exception as exc:
         console.print(f"[bold red]Error fetching RDS instances:[/bold red] {exc}")
@@ -347,34 +395,8 @@ def _event_label(event: dict) -> tuple[str, str] | None:
     return style, message
 
 
-def _try_cleanup_ssm(ssm_client) -> None:
-    """Offer to delete the stale SSM context parameter after a failed execution."""
-    if not Confirm.ask(
-        f"\nClean up stale SSM context [dim]({SSM_CONTEXT_PARAM})[/dim] "
-        "to allow future executions?",
-        default=True,
-    ):
-        console.print(
-            f"[dim]To clean up manually:[/dim]\n"
-            f'  aws ssm delete-parameter --name "{SSM_CONTEXT_PARAM}" --region {AWS_REGION}'
-        )
-        return
-    try:
-        ssm_client.delete_parameter(Name=SSM_CONTEXT_PARAM)
-        console.print("[green]✓ SSM context cleared.[/green]")
-    except ssm_client.exceptions.ParameterNotFound:
-        console.print("[dim]SSM context was already absent.[/dim]")
-    except Exception as exc:
-        console.print(f"[red]Could not delete SSM parameter:[/red] {exc}")
-        console.print(
-            f"[dim]Run manually:[/dim]\n"
-            f'  aws ssm delete-parameter --name "{SSM_CONTEXT_PARAM}" --region {AWS_REGION}'
-        )
-
-
 def _watch_execution(
     sf_client,
-    ssm_client,
     execution_arn: str,
     poll_interval: int = 30,
     debug: bool = False,
@@ -520,10 +542,6 @@ def _watch_execution(
     if detached:
         console.print("\n[yellow]Detached.[/yellow] Execution continues in AWS.")
         console.print(f"[dim]ARN: {execution_arn}[/dim]")
-        console.print(
-            f"\n[dim]If the execution fails, clean up the SSM context with:[/dim]\n"
-            f'  aws ssm delete-parameter --name "{SSM_CONTEXT_PARAM}" --region {AWS_REGION}'
-        )
     else:
         final = sf_client.describe_execution(executionArn=execution_arn)
         status = final["status"]
@@ -535,7 +553,6 @@ def _watch_execution(
             console.print(f"\n[bold red]✗ {status}[/bold red] after {elapsed_str}")
             if cause := final.get("cause"):
                 console.print(f"[red]Cause:[/red] {cause}")
-            _try_cleanup_ssm(ssm_client)
 
 
 # ---------------------------------------------------------------------------
@@ -545,13 +562,6 @@ def _watch_execution(
 
 @app.command()
 def main(
-    operation: Optional[str] = typer.Option(
-        None,
-        "--operation",
-        "-o",
-        help="Operation: drift or anonymisation",
-        show_default=False,
-    ),
     snapshot_arn: Optional[str] = typer.Option(
         None,
         "--snapshot-arn",
@@ -582,47 +592,18 @@ def main(
         help="Stream ECS task CloudWatch logs in real time (implies --watch)",
     ),
 ) -> None:
-    console.rule("[bold blue]OPAC Data Step Function[/bold blue]")
+    console.rule("[bold blue]OPAC Test DB Drift[/bold blue]")
 
-    # --- Operation ----------------------------------------------------------
-    if operation is None:
-        op_table = Table(show_header=False, box=None, padding=(0, 2))
-        op_table.add_column("#", style="dim", width=3, justify="right")
-        op_table.add_column("Operation", style="cyan", no_wrap=True)
-        op_table.add_column("Description")
-        op_table.add_row(
-            "1", "drift", "Restore snapshot + date drifting  [dim](Doppler: int)[/dim]"
-        )
-        op_table.add_row(
-            "2",
-            "anonymisation",
-            "Restore snapshot + anonymisation  [dim](Doppler: prod)[/dim]",
-        )
-        console.print()
-        console.print(op_table)
-        op_choice = Prompt.ask("Select operation", choices=["1", "2"])
-        operation = ["drift", "anonymisation"][int(op_choice) - 1]
-    elif operation not in ("drift", "anonymisation"):
-        console.print(
-            f"[bold red]Invalid operation '[/bold red][cyan]{operation}[/cyan]"
-            "[bold red]'. Choose drift or anonymisation.[/bold red]"
-        )
-        raise typer.Exit(1)
-
-    drifting = operation == "drift"
-    anonymisation = operation == "anonymisation"
-    doppler_config = _OPERATION_DOPPLER_CONFIG[operation]
+    # --- Snapshot -----------------------------------------------------------
+    if snapshot_arn is None:
+        snapshot_arn = _select_snapshot()
 
     # --- Doppler credentials ------------------------------------------------
     console.print(
         f"\nFetching DB credentials from Doppler "
-        f"([cyan]{DOPPLER_PROJECT}[/cyan] / [cyan]{doppler_config}[/cyan])…"
+        f"([cyan]{DOPPLER_PROJECT}[/cyan] / [cyan]{DOPPLER_CONFIG}[/cyan])…"
     )
-    secrets = _fetch_doppler_secrets(doppler_config)
-
-    # --- Snapshot -----------------------------------------------------------
-    if snapshot_arn is None:
-        snapshot_arn = _select_snapshot(shared=anonymisation)
+    secrets = _fetch_doppler_secrets()
 
     # --- Target RDS instance ------------------------------------------------
     if target_rds_instance_id is None:
@@ -632,14 +613,10 @@ def main(
     payload: dict = {
         "comment": "Triggered via CLI",
         "snapshotArn": snapshot_arn,
-        "snapshotDbHost": secrets["DB_HOST"],
         "snapshotDbName": secrets["DB_NAME"],
         "snapshotDbUsername": secrets["DB_USER"],
         "snapshotDbPassword": secrets["DB_PASSWORD"],
-        "snapshotDbPort": int(secrets["DB_PORT"]),
         "targetRdsInstanceId": target_rds_instance_id,
-        "anonymisation": anonymisation,
-        "drifting": drifting,
     }
 
     # --- Summary table ------------------------------------------------------
@@ -663,7 +640,6 @@ def main(
     # --- Execute ------------------------------------------------------------
     console.print("\nStarting execution…")
     sf_client = boto3.client("stepfunctions", region_name=AWS_REGION)
-    ssm_client = boto3.client("ssm", region_name=AWS_REGION)
     response = sf_client.start_execution(
         stateMachineArn=STATE_MACHINE_ARN,
         input=json.dumps(payload),
@@ -674,12 +650,9 @@ def main(
     console.print(f"ARN: [dim]{execution_arn}[/dim]")
 
     if watch or debug:
-        _watch_execution(sf_client, ssm_client, execution_arn, debug=debug)
+        _watch_execution(sf_client, execution_arn, debug=debug)
     else:
-        console.print(
-            f"\n[dim]If the execution fails, clean up the SSM context with:[/dim]\n"
-            f'  aws ssm delete-parameter --name "{SSM_CONTEXT_PARAM}" --region {AWS_REGION}'
-        )
+        console.print(f"\n[dim]Execution ARN: {execution_arn}[/dim]")
 
 
 if __name__ == "__main__":
