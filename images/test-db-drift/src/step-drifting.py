@@ -1,9 +1,7 @@
 import logging
 import os
 import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timezone
-import psycopg2
 
 from utils.aws import (
     rds_client,
@@ -12,60 +10,8 @@ from utils.aws import (
     wait_for_deleted_instance,
 )
 from utils.db import get_ephemeral_db_connection, get_ephemeral_conn_params
-
-# this dictionary list all the columns by table where apply date drifting
-# if begin or end in the same table, because of check constraint, end is always updated first
-date_drifting_table_column = {
-    "allotments": ["end", "begin"],
-    "connected_equipment_events": ["date"],
-    "customers": ["inserted_at", "updated_at"],
-    "devices": ["last_comm_date"],
-    "entity_availabilities": ["end", "begin"],
-    "installation_device_maps": ["end", "begin"],
-    "installation_logs": ["date"],
-    "invoices": ["date", "inserted_at", "updated_at"],
-    "metrics": ["end", "begin"],
-    "oban_jobs": ["scheduled_at"],
-    "oban_peers": ["started_at", "expires_at"],
-    "offers": ["end", "begin", "expires_at"],
-    "parkings": ["end", "begin", "inserted_at", "updated_at", "finished_at"],
-    "parking_categories": ["inserted_at", "updated_at"],
-    "parking_comments": ["inserted_at", "updated_at"],
-    "parking_prices": ["inserted_at", "updated_at"],
-    "parking_states": ["date"],
-    "payments": ["date", "paid_at", "cancelled_at", "refunded_at"],
-    "payment_readers": ["inserted_at", "updated_at"],
-    "rights": ["end", "begin"],
-    "scenario_logs": ["date"],
-    "terminals": ["inserted_at", "updated_at", "last_comm_date"],
-    "validation_links": ["expiration"],
-}
-
-ALL_DRIFTED_DATE_COLUMNS = [
-    "begin",
-    "end",
-    "created_at",
-    "updated_at",
-    "inserted_at",
-    "starts_at",
-    "ends_at",
-    "scheduled_at",
-    "attempted_at",
-    "cancelled_at",
-    "completed_at",
-    "discarded_at",
-    "confirmed_at",
-    "delivered_at",
-    "failed_at",
-    "expires_at",
-    "last_seen_at",
-    "date",
-    "paid_at",
-    "refunded_at",
-    "expiration",
-    "last_comm_date",
-    "finished_at",
-]
+from utils.drift import apply_drift
+from utils.drift_policy import load_policy, run_preflight
 
 
 def _extract_snapshot_creation_date(rds_client, snapshot_arn: str) -> date:
@@ -83,7 +29,8 @@ def _extract_snapshot_creation_date(rds_client, snapshot_arn: str) -> date:
     create_time = snapshot.get("SnapshotCreateTime")
     if create_time and isinstance(create_time, datetime):
         logging.info(
-            f"No date in snapshot name '{snapshot_name}' — using SnapshotCreateTime"
+            "No date in snapshot name '%s' — using SnapshotCreateTime",
+            snapshot_name,
         )
         return create_time.date()
     raise RuntimeError(f"Cannot determine creation date for snapshot '{snapshot_name}'")
@@ -96,11 +43,13 @@ def _ensure_ephemeral_ready(rds_client, ephemeral_id: str) -> bool:
         existing = rds_client.describe_db_instances(DBInstanceIdentifier=ephemeral_id)
         status = existing["DBInstances"][0]["DBInstanceStatus"]
         if status == "deleting":
-            logging.info(f"Ephemeral {ephemeral_id} is being deleted — waiting...")
+            logging.info("Ephemeral %s is being deleted — waiting", ephemeral_id)
             wait_for_deleted_instance(rds_client, ephemeral_id)
             return False
         logging.info(
-            f"Ephemeral {ephemeral_id} already exists (status={status}) — reusing"
+            "Ephemeral %s already exists (status=%s) — reusing",
+            ephemeral_id,
+            status,
         )
         return True
     except rds_client.exceptions.DBInstanceNotFoundFault:
@@ -160,13 +109,13 @@ def create_ephemeral_instance_from_snapshot(
 
     already_exists = _ensure_ephemeral_ready(rds_client, ephemeral_id)
     if already_exists:
-        logging.info(f"Ephemeral {ephemeral_id} already exists — skipping restore")
+        logging.info("Ephemeral %s already exists — skipping restore", ephemeral_id)
         return ephemeral_id
 
     snapshot_creation_date = _extract_snapshot_creation_date(rds_client, snapshot_arn)
-    logging.info(f"Snapshot creation date: {snapshot_creation_date.isoformat()}")
+    logging.info("Snapshot creation date: %s", snapshot_creation_date.isoformat())
 
-    logging.info(f"Fetching config from target instance: {target_id}")
+    logging.info("Fetching config from target instance: %s", target_id)
     existing = rds_client.describe_db_instances(DBInstanceIdentifier=target_id)[
         "DBInstances"
     ][0]
@@ -176,152 +125,57 @@ def create_ephemeral_instance_from_snapshot(
     )
 
     logging.info(
-        f"Restoring ephemeral instance {ephemeral_id} from snapshot {snapshot_arn}"
+        "Restoring ephemeral instance %s from snapshot %s",
+        ephemeral_id,
+        snapshot_arn,
     )
     rds_client.restore_db_instance_from_db_snapshot(**restore_kwargs)
-    logging.info(f"Restore initiated for {ephemeral_id}")
+    logging.info("Restore initiated for %s", ephemeral_id)
 
     return ephemeral_id
 
 
-def _drift_table(
-    conn_params: dict, table: str, columns: list[str], delta_days: int
-) -> tuple[str, int]:
-    """Drift all date columns in one table with a single UPDATE. Each call uses its own connection."""
-    set_clause = ", ".join(
-        f'"{col}" = "{col}" + INTERVAL \'{delta_days} days\'' for col in columns
-    )
-    conn = psycopg2.connect(**conn_params)
-    try:
-        with conn.cursor() as c:
-            c.execute(f'UPDATE "{table}" SET {set_clause}')
-            row_count = c.rowcount
-        conn.commit()
-        return table, row_count
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
-
-
-def _find_disruptive_constraints(conn) -> list[dict]:
-    """Find all CHECK and EXCLUDE constraints on tables being date-drifted."""
-    with conn.cursor() as c:
-        c.execute(
-            """
-            SELECT
-                n.nspname AS schema_name,
-                c.relname AS table_name,
-                con.conname AS constraint_name,
-                pg_get_constraintdef(con.oid) AS constraint_def,
-                con.contype AS constraint_type
-            FROM pg_constraint con
-            JOIN pg_class c ON c.oid = con.conrelid
-            JOIN pg_namespace n ON n.oid = c.relnamespace
-            WHERE n.nspname = 'public'
-              AND con.contype IN ('c', 'x')
-              AND EXISTS (
-                  SELECT 1 FROM information_schema.columns col
-                  WHERE col.table_schema = n.nspname
-                    AND col.table_name = c.relname
-                    AND col.column_name = ANY(%s)
-              )
-        """,
-            (list(ALL_DRIFTED_DATE_COLUMNS),),
-        )
-        return [
-            {
-                "schema": row[0],
-                "table": row[1],
-                "name": row[2],
-                "definition": row[3],
-                "type": row[4],
-            }
-            for row in c.fetchall()
-        ]
-
-
-def _drop_disruptive_constraints(conn, constraints: list[dict]):
-    for c_def in constraints:
-        qualified = f'"{c_def["schema"]}"."{c_def["table"]}"'
-        logging.info(
-            f"Dropping constraint {c_def['name']} on {qualified} ({c_def['type']})"
-        )
-        with conn.cursor() as cur:
-            cur.execute(f'ALTER TABLE {qualified} DROP CONSTRAINT "{c_def["name"]}"')
-    conn.commit()
-
-
-def _recreate_constraints(conn, constraints: list[dict]):
-    for c_def in constraints:
-        qualified = f'"{c_def["schema"]}"."{c_def["table"]}"'
-        logging.info(f"Restoring constraint {c_def['name']} on {qualified}")
-        with conn.cursor() as cur:
-            cur.execute(
-                f'ALTER TABLE {qualified} ADD CONSTRAINT "{c_def["name"]}" {c_def["definition"]}'
-            )
-    conn.commit()
-
-
 def apply_date_drifting(rds_client, ephemeral_id: str, snapshot_arn: str):
-    # Main connection used only for constraint management
+    policy = load_policy()
     conn = get_ephemeral_db_connection(rds_client, ephemeral_id)
-    # Separate params dict used to open one connection per parallel worker
     conn_params = get_ephemeral_conn_params(rds_client, ephemeral_id)
 
-    snapshot_creation_date = _extract_snapshot_creation_date(rds_client, snapshot_arn)
-    today = datetime.now(timezone.utc).date()
-    delta_days = (today - snapshot_creation_date).days
+    try:
+        with conn.cursor() as cursor:
+            preflight_errors = run_preflight(cursor, policy)
+        if preflight_errors:
+            for err in preflight_errors:
+                logging.error("Preflight: %s", err)
+            raise RuntimeError(
+                f"Drift preflight failed ({len(preflight_errors)} error(s))"
+            )
+        logging.info(
+            "Preflight passed: %d tables in policy v%d",
+            len(policy.tables),
+            policy.version,
+        )
 
-    logging.info(
-        f"Date delta: +{delta_days} days (snapshot={snapshot_creation_date}, today={today})"
-    )
+        snapshot_creation_date = _extract_snapshot_creation_date(
+            rds_client, snapshot_arn
+        )
+        today = datetime.now(timezone.utc).date()
+        delta_days = (today - snapshot_creation_date).days
 
-    # Find and drop disruptive constraints before drifting
-    disruptive = _find_disruptive_constraints(conn)
-    if disruptive:
-        logging.info(f"Found {len(disruptive)} disruptive constraints to drop")
-        _drop_disruptive_constraints(conn, disruptive)
-    else:
-        logging.info("No disruptive constraints found")
+        logging.info(
+            "Date delta: +%d days (snapshot=%s, today=%s)",
+            delta_days,
+            snapshot_creation_date,
+            today,
+        )
 
-    table_count = len(date_drifting_table_column)
-    max_workers = int(os.environ.get("DRIFT_MAX_WORKERS", "8"))
-    batch_timeout = int(os.environ.get("DRIFT_BATCH_TIMEOUT_SECONDS", "3600"))
-
-    logging.info(
-        f"Drifting {table_count} tables in parallel (max_workers={max_workers})…"
-    )
-
-    errors = 0
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {
-            executor.submit(
-                _drift_table, conn_params, table, columns, delta_days
-            ): table
-            for table, columns in date_drifting_table_column.items()
-        }
-        for future in as_completed(futures, timeout=batch_timeout):
-            table = futures[future]
-            try:
-                _, row_count = future.result()
-                logging.info(f"Drifted {table}: {row_count} rows")
-            except Exception as exc:
-                logging.error(f"Error drifting {table}: {exc}")
-                errors += 1
-
-    # Recreate constraints — errors propagate (no swallowing)
-    if disruptive:
-        logging.info(f"Restoring {len(disruptive)} constraints")
-        _recreate_constraints(conn, disruptive)
-
-    conn.close()
-
-    if errors:
-        logging.warning(f"Date drifting completed with {errors} table error(s)")
-    else:
-        logging.info(f"Date drifting complete ({table_count} tables)")
+        result = apply_drift(conn, conn_params, policy, delta_days)
+        logging.info(
+            "Date drifting complete (%d tables, %d rows)",
+            result.tables_drifted,
+            result.total_rows,
+        )
+    finally:
+        conn.close()
 
 
 def main():
@@ -347,5 +201,5 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        logging.exception(f"Fatal error: {e}")
+        logging.exception("Fatal error: %s", e)
         exit(1)

@@ -1,0 +1,49 @@
+version: 1
+schema: public
+tables:
+  allotments:
+    columns: [end, begin]
+  connected_equipment_events:
+    columns: [date]
+  customers:
+    columns: [inserted_at, updated_at]
+  devices:
+    columns: [last_comm_date]
+  entity_availabilities:
+    columns: [end, begin]
+  installation_device_maps:
+    columns: [end, begin]
+  installation_logs:
+    columns: [date]
+  invoices:
+    columns: [date, inserted_at, updated_at]
+  metrics:
+    columns: [end, begin]
+  oban_jobs:
+    columns: [scheduled_at]
+  oban_peers:
+    columns: [started_at, expires_at]
+  offers:
+    columns: [end, begin, expires_at]
+  parkings:
+    columns: [end, begin, inserted_at, updated_at, finished_at]
+  parking_categories:
+    columns: [inserted_at, updated_at]
+  parking_comments:
+    columns: [inserted_at, updated_at]
+  parking_prices:
+    columns: [inserted_at, updated_at]
+  parking_states:
+    columns: [date]
+  payments:
+    columns: [date, paid_at, cancelled_at, refunded_at]
+  payment_readers:
+    columns: [inserted_at, updated_at]
+  rights:
+    columns: [end, begin]
+  scenario_logs:
+    columns: [date]
+  terminals:
+    columns: [inserted_at, updated_at, last_comm_date]
+  validation_links:
+    columns: [expiration]

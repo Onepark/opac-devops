@@ -18,7 +18,6 @@ def get_ephemeral_conn_params(rds_client, ephemeral_id: str) -> dict:
         "user": os.environ["SNAPSHOT_DB_USERNAME"],
         "password": os.environ["SNAPSHOT_DB_PASSWORD"],
         "sslmode": os.environ.get("DB_SSLMODE", "require"),
-        "sslrootcert": os.environ.get("DB_SSLROOTCERTS"),
         "connect_timeout": int(os.environ.get("DB_CONNECT_TIMEOUT_SECONDS", "30")),
         # TCP keepalives so a silently-dropped RDS connection cannot leave the
         # client blocked forever in recv().
@@ -39,7 +38,7 @@ def _truthy(value: str) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _configure_session(conn) -> None:
+def configure_session(conn) -> None:
     with conn.cursor() as cursor:
         cursor.execute(
             "SET statement_timeout = %s",
@@ -67,7 +66,7 @@ def get_ephemeral_db_connection(rds_client, ephemeral_id: str):
     )
     try:
         conn = psycopg2.connect(**params)
-        _configure_session(conn)
+        configure_session(conn)
         cur = conn.cursor()
         cur.execute("SELECT version();")
         logging.info(f"Connected: {cur.fetchone()[0]}")
