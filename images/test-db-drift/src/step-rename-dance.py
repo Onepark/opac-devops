@@ -104,8 +104,7 @@ def main():
     target_id = os.environ["TARGET_RDS_INSTANCE_ID"]
     execution_arn = os.environ.get("EXECUTION_ARN", "unknown")
     logging.info(
-        "=== Step: Rename Dance ===",
-        extra={"execution_arn": execution_arn, "target": target_id},
+        "=== Step: Rename Dance === execution=%s target=%s", execution_arn, target_id
     )
 
     rds = rds_client()

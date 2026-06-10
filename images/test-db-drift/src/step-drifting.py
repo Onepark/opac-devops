@@ -184,8 +184,7 @@ def main():
     snapshot_arn = os.environ["SNAPSHOT_ARN"]
     execution_name = os.environ.get("EXECUTION_NAME", "unknown")
     logging.info(
-        "=== Step: Drifting ===",
-        extra={"execution_name": execution_name, "target": target_id},
+        "=== Step: Drifting === execution=%s target=%s", execution_name, target_id
     )
 
     rds = rds_client()
