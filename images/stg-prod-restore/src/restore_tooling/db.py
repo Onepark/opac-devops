@@ -138,8 +138,6 @@ def _configure_session(conn: psycopg2.extensions.connection) -> None:
 
 
 def postgres_major_from_server_version(server_version: int) -> str:
-    if server_version >= 100000:
-        return str(server_version // 10000)
     return str(server_version // 10000)
 
 
