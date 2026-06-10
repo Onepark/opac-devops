@@ -1,12 +1,12 @@
 import logging
 import os
 import re
-import boto3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timezone
 import psycopg2
 
 from utils.aws import (
+    rds_client,
     setup_logging,
     wait_for_available_instance,
     wait_for_deleted_instance,
@@ -66,10 +66,6 @@ ALL_DRIFTED_DATE_COLUMNS = [
     "last_comm_date",
     "finished_at",
 ]
-
-
-def _get_rds_client():
-    return boto3.client("rds", region_name=os.environ.get("AWS_REGION", "eu-west-3"))
 
 
 def _extract_snapshot_creation_date(rds_client, snapshot_arn: str) -> date:
@@ -338,7 +334,7 @@ def main():
         extra={"execution_name": execution_name, "target": target_id},
     )
 
-    rds = _get_rds_client()
+    rds = rds_client()
 
     ephemeral_id = create_ephemeral_instance_from_snapshot(rds, target_id, snapshot_arn)
 

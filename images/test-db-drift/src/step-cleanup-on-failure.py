@@ -1,15 +1,11 @@
 import logging
 import os
-import boto3
 
 from utils.aws import (
+    rds_client,
     setup_logging,
     wait_for_deleted_instance,
 )
-
-
-def _get_rds_client():
-    return boto3.client("rds", region_name=os.environ.get("AWS_REGION", "eu-west-3"))
 
 
 def _cleanup_ephemeral(rds_client, ephemeral_id: str):
@@ -35,7 +31,7 @@ def main():
     ephemeral_id = f"ephemeral-transform-{target_id}"
 
     logging.info("=== Step: Cleanup on Failure ===")
-    rds = _get_rds_client()
+    rds = rds_client()
     _cleanup_ephemeral(rds, ephemeral_id)
     # Always exit with a non-zero code so Step Functions marks the execution as FAILED.
     exit(1)

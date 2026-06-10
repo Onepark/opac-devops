@@ -1,17 +1,13 @@
 import logging
 import os
-import boto3
 
 from utils.aws import (
+    rds_client,
     setup_logging,
     wait_for_available_instance,
     wait_for_deleted_instance,
     wait_for_tcp_port,
 )
-
-
-def _get_rds_client():
-    return boto3.client("rds", region_name=os.environ.get("AWS_REGION", "eu-west-3"))
 
 
 def _check_old_target_conflict(rds_client, old_target_id: str):
@@ -34,7 +30,7 @@ def _check_old_target_conflict(rds_client, old_target_id: str):
 def _verify_connectivity(rds_client, db_instance_id: str, port: int = 5432):
     instance = rds_client.describe_db_instances(DBInstanceIdentifier=db_instance_id)
     endpoint = instance["DBInstances"][0]["Endpoint"]["Address"]
-    wait_for_tcp_port(endpoint, port, max_attempts=30, delay=10)
+    wait_for_tcp_port(endpoint, port, max_attempts=30, delay_seconds=10)
     logging.info(f"Connectivity verified for {db_instance_id} ({endpoint}:{port})")
 
 
@@ -112,7 +108,7 @@ def main():
         extra={"execution_arn": execution_arn, "target": target_id},
     )
 
-    rds = _get_rds_client()
+    rds = rds_client()
     rename_dance(rds, target_id)
 
 

@@ -1,9 +1,14 @@
 import logging
+import os
 import socket
 import sys
 import time
 
+import boto3
 import botocore.waiter
+from botocore.config import Config
+
+CLIENT_CONFIG = Config(retries={"mode": "standard", "max_attempts": 6})
 
 
 # Custom waiter: polls DescribeDBInstances until status == "available".
@@ -48,6 +53,14 @@ _WAITER_MODEL = botocore.waiter.WaiterModel(
 )
 
 
+def rds_client() -> boto3.client:
+    return boto3.client(
+        "rds",
+        region_name=os.environ.get("AWS_REGION", "eu-west-3"),
+        config=CLIENT_CONFIG,
+    )
+
+
 def setup_logging() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -59,21 +72,27 @@ def setup_logging() -> None:
 
 
 def wait_for_tcp_port(
-    host: str, port: int, max_attempts: int = 30, delay: int = 10
+    host: str, port: int, max_attempts: int = 30, delay_seconds: int = 10
 ) -> None:
     """Poll TCP port until it accepts connections. Raises RuntimeError on timeout."""
     for attempt in range(1, max_attempts + 1):
         try:
             with socket.create_connection((host, port), timeout=5):
-                logging.info(f"TCP {host}:{port} reachable.")
+                logging.info("TCP %s:%s reachable", host, port)
                 return
         except OSError as exc:
             logging.info(
-                f"TCP check {attempt}/{max_attempts}: {host}:{port} not reachable yet ({exc}). Retrying in {delay}s…"
+                "TCP check %s/%s failed for %s:%s (%s); retrying in %ss",
+                attempt,
+                max_attempts,
+                host,
+                port,
+                exc,
+                delay_seconds,
             )
-            time.sleep(delay)
+            time.sleep(delay_seconds)
     raise RuntimeError(
-        f"Could not reach {host}:{port} after {max_attempts} attempts ({max_attempts * delay}s)."
+        f"Could not reach {host}:{port} after {max_attempts * delay_seconds}s"
     )
 
 
