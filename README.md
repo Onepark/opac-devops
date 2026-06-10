@@ -128,3 +128,52 @@ Once the tunnel is open, connect with psql using the full RDS hostname (not `loc
 ```bash
 psql -h <rds-hostname> -p 5432 -U <user> -d <db>
 ```
+
+---
+
+## ecs_exec.py
+
+Execs into a running ECS container via SSM `execute-command`. Interactively lists available clusters and tasks if not provided as flags.
+
+```bash
+mise run ecs-exec
+# or: uv run ecs_exec.py
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--cluster`, `-c` | interactive list | ECS cluster ARN or name |
+| `--task`, `-t` | interactive list | ECS task ID |
+| `--container` | `api` | Container name |
+| `--command` | `/bin/sh` | Command to run inside the container |
+
+**Examples**
+
+```bash
+# Fully interactive
+mise run ecs-exec
+
+# Skip cluster selection
+uv run ecs_exec.py --cluster opk-opac-test2-ecs-cluster
+
+# Skip both cluster and task selection
+uv run ecs_exec.py --cluster opk-opac-test2-ecs-cluster --task <task-id>
+```
+
+**Running a worker from inside the container**
+
+Once connected, start an IEx session attached to the running node:
+
+```bash
+/app/bin/opac remote
+```
+
+Then insert a job from IEx:
+
+```elixir
+# Trigger an accounting report for the current month
+Oban.insert(OpacCore.Payments.Workers.AccountingReport.new(%{"period" => "monthly"}))
+
+# Force a specific reference date (useful to report on past months with real data)
+Oban.insert(OpacCore.Payments.Workers.AccountingReport.new(%{"period" => "monthly", "today" => "2026-06-01"}))
+```

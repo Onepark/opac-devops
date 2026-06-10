@@ -2,7 +2,7 @@
 uv      = "latest"
 awscli  = "latest"
 doppler = "latest"
-granted = "latest"
+"ubi:common-fate/granted" = "latest"
 
 [tasks.trigger]
 description = "Trigger the data step function (drifting / anonymisation)"
@@ -11,3 +11,7 @@ run = "uv run trigger_step_function.py"
 [tasks.bastion]
 description = "Open an SSM port-forwarding tunnel to a private RDS instance"
 run = "uv run bastion_connect.py"
+
+[tasks.ecs-exec]
+description = "Exec into a running ECS container (interactive cluster/task selection)"
+run = "uv run ecs_exec.py"
