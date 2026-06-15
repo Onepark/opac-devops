@@ -1,0 +1,28 @@
+# ── Build stage: install dependencies into .venv ─────────────────────────────
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS builder
+
+WORKDIR /app
+ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_NO_DEV=1
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    uv sync --locked --no-install-project
+
+# ── Runtime stage ─────────────────────────────────────────────────────────────
+FROM python:3.12-slim-bookworm
+
+RUN groupadd --system --gid 999 nonroot \
+    && useradd --system --gid 999 --uid 999 --create-home nonroot
+
+WORKDIR /app
+
+COPY --from=builder /app/.venv .venv
+COPY src/step-rename-dance.py src/step-rename-dance.py
+COPY src/utils/aws.py src/utils/db.py src/utils/__init__.py /app/.venv/lib/python3.12/site-packages/utils/
+
+ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONUNBUFFERED=1
+
+USER nonroot
+CMD ["python", "src/step-rename-dance.py"]

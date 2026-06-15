@@ -1,0 +1,19 @@
+[project]
+name = "opac-test-db-drift-images"
+version = "0.1.0"
+description = "Database drift tooling images"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "boto3>=1.42.75",
+    "psycopg2-binary>=2.9.11",
+    "PyYAML>=6.0.2",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+]

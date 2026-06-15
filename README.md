@@ -35,29 +35,26 @@ assume onepark-nonprod   # or onepark-prod
 
 ---
 
-## trigger_step_function.py
+## test_db.py
 
-Triggers the data step function (ephemeral RDS restore → optional date drifting → optional
-anonymisation → rename dance). Fetches DB credentials from Doppler automatically.
+Triggers the test-db-drift Step Function (ephemeral RDS restore from own-account
+manual snapshot → date drifting → rename dance). Fetches DB credentials from
+Doppler (`opac-data-step-function` / `int` config).
 
 ```bash
-mise run trigger
-# or: uv run trigger_step_function.py
+uv run test_db.py
 ```
 
 **Interactive flow**
 
-1. **Operation** — `drift` or `anonymisation`
-   - `drift` → `drifting=true`, `anonymisation=false`, Doppler config `int`
-   - `anonymisation` → `drifting=false`, `anonymisation=true`, Doppler config `prod`
-2. **Snapshot** — pick from own-account snapshots (drift) or shared snapshots (anonymisation)
-3. **Target RDS** — pick from instance list (filtered to `test`/`stg` instances)
+1. **Snapshot** — pick from own-account PostgreSQL manual snapshots (filtered to
+   those with a date in the name for drift computation)
+2. **Target RDS** — pick from instance list (filtered to `test` instances)
 
 All parameters can be passed as flags to skip the interactive prompts:
 
 | Option | Default | Description |
 |---|---|---|
-| `--operation`, `-o` | prompted | Operation: `drift` or `anonymisation` |
 | `--snapshot-arn`, `-s` | interactive list | ARN of the RDS snapshot to restore from |
 | `--target-rds-instance-id`, `-t` | interactive list | Target RDS instance ID |
 | `--watch` / `--no-watch` | `--watch` | Stream execution progress after triggering |
@@ -68,26 +65,16 @@ All parameters can be passed as flags to skip the interactive prompts:
 
 ```bash
 # Fully interactive
-mise run trigger
+uv run test_db.py
 
-# Non-interactive drift
-uv run trigger_step_function.py \
-  --operation drift \
+# Non-interactive
+uv run test_db.py \
   --snapshot-arn arn:aws:rds:eu-west-3:418484240945:snapshot:golden-snapshot-20260305-postgres-18 \
-  --target-rds-instance-id db-test2
-
-# Non-interactive anonymisation
-uv run trigger_step_function.py \
-  --operation anonymisation \
-  --snapshot-arn arn:aws:rds:eu-west-3:123456789012:snapshot:shared-snapshot-20260305 \
-  --target-rds-instance-id db-test2
+  --target-rds-instance-id opk-opac-test2
 
 # Dry-run to inspect the payload
-uv run trigger_step_function.py --operation drift --dry-run
+uv run test_db.py --dry-run
 ```
-
-If the execution fails, the CLI will prompt to clean up the stale SSM context
-(`/opac/int/step_function/context`) automatically.
 
 ---
 
@@ -133,7 +120,8 @@ psql -h <rds-hostname> -p 5432 -U <user> -d <db>
 
 ## ecs_exec.py
 
-Execs into a running ECS container via SSM `execute-command`. Interactively lists available clusters and tasks if not provided as flags.
+Execs into a running ECS container via SSM `execute-command`. Interactively lists
+available clusters and tasks if not provided as flags.
 
 ```bash
 mise run ecs-exec
@@ -176,4 +164,76 @@ Oban.insert(OpacCore.Payments.Workers.AccountingReport.new(%{"period" => "monthl
 
 # Force a specific reference date (useful to report on past months with real data)
 Oban.insert(OpacCore.Payments.Workers.AccountingReport.new(%{"period" => "monthly", "today" => "2026-06-01"}))
+```
+
+---
+
+## stg_db.py
+
+Switches the `db.stg.onepark.dev` Route53 CNAME to the latest ready production-derived
+restore slot (the staging DB cutover). Reads slot state from the
+`opk-opac-stg-prod-restore-state` DynamoDB table, picks the slot with `readyForQa=true`
+and the latest `sourceSnapshotWeek` (ISO year/week, tie-broken on snapshot create
+time), moves the cutover, promotes the new active slot, demotes the previous one,
+and submits a fire-and-forget `DeleteDBInstance` for the previous active RDS.
+
+Audit-only — writes a `PROMOTION#<iso-week>` record to the same DynamoDB table.
+
+Requires the non-prod developer role to have `AmazonDynamoDBFullAccess` and the
+inline Route53 cutover policy attached (added in
+`envs/non-prod/shared/main.tf`).
+
+```bash
+mise run stg-db switch                 # or: uv run stg_db.py switch
+mise run stg-db -- switch --dry-run    # preview only, no AWS mutation
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--dry-run` | `false` | Print the plan and exit without mutating anything |
+| `--requester` | `$USER` | Audit metadata: who is promoting |
+| `--reason` | `""` | Audit metadata: why are you promoting? |
+
+**Examples**
+
+```bash
+# Preview which slot would be promoted
+uv run stg_db.py switch --dry-run
+
+# Promote with a reason for the audit record
+uv run stg_db.py switch --reason "QA requested latest snapshot"
+
+# Audit trail lookup
+aws dynamodb get-item \
+  --table-name opk-opac-stg-prod-restore-state \
+  --key '{"pk": {"S": "PROMOTION#2026w23"}}'
+```
+
+If no slot is `readyForQa`, the script exits non-zero with
+`no slot is ready; trigger or wait for a reconcile`. The cutover is a no-op
+(exit 0) if the current Route53 target already points at the chosen slot.
+
+---
+
+## Container images
+
+Image build contexts live under `images/`:
+
+- `images/test-db-drift/` — date-drifting/rename-dance/cleanup images and ASL (deployed via Terraform).
+- `images/stg-prod-restore/` — staging production-derived restore tooling images used by the Terraform restore stack.
+
+Build and push one image at a time:
+
+```bash
+images/build-push.sh test-db-drift-drifting
+images/build-push.sh test-db-drift-rename-dance
+images/build-push.sh test-db-drift-cleanup
+images/build-push.sh stg-prod-restore-db-admin
+images/build-push.sh stg-prod-restore-sanitizer
+```
+
+The default tag is the current git SHA. Override with an explicit second argument when needed:
+
+```bash
+images/build-push.sh stg-prod-restore-db-admin 2026-06-03-1
 ```
