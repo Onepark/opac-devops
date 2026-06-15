@@ -8,7 +8,6 @@ from typing import Iterable
 import boto3
 from botocore.config import Config
 
-
 CLIENT_CONFIG = Config(retries={"mode": "standard", "max_attempts": 6})
 
 
@@ -33,9 +32,7 @@ def require_env(names: Iterable[str]) -> dict[str, str]:
             values[name] = value
 
     if missing:
-        raise RuntimeError(
-            f"Missing required environment variable(s): {', '.join(missing)}"
-        )
+        raise RuntimeError(f"Missing required environment variable(s): {', '.join(missing)}")
 
     return values
 
@@ -76,9 +73,7 @@ def get_app_secret(secretsmanager, secret_arn: str) -> AppSecret:
     }
     missing = [key for key, value in required.items() if not value]
     if missing:
-        raise RuntimeError(
-            f"Application secret missing non-empty key(s): {', '.join(missing)}"
-        )
+        raise RuntimeError(f"Application secret missing non-empty key(s): {', '.join(missing)}")
 
     return AppSecret(
         username=required["DB_USERNAME"],

@@ -15,4 +15,13 @@ pythonpath = ["src"]
 [dependency-groups]
 dev = [
     "pytest>=8",
+    "ruff>=0.11",
 ]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = ["E501"]

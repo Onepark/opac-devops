@@ -42,11 +42,7 @@ def run_verification(
                     target = row[0]
                     checked = row[1] or 0
                     failed = row[2] or 0
-                    results.append(
-                        VerificationResult(
-                            target=target, checked=checked, failed=failed
-                        )
-                    )
+                    results.append(VerificationResult(target=target, checked=checked, failed=failed))
 
     failed_results = [r for r in results if r.failed > 0]
     if failed_results:

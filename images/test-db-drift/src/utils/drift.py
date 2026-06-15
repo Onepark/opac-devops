@@ -31,9 +31,7 @@ def drift_table(
     Uses the provided connection (caller manages lifecycle).
     Returns the number of rows updated.
     """
-    set_clause = ", ".join(
-        f'"{col}" = "{col}" + INTERVAL \'{delta_days} days\'' for col in columns
-    )
+    set_clause = ", ".join(f'"{col}" = "{col}" + INTERVAL \'{delta_days} days\'' for col in columns)
     with conn.cursor() as c:
         c.execute(f'UPDATE "{schema}"."{table}" SET {set_clause}')
         row_count = c.rowcount
@@ -115,10 +113,7 @@ def recreate_constraints(conn, constraints: list[dict]) -> None:
         qualified = f'"{c_def["schema"]}"."{c_def["table"]}"'
         logging.info("Restoring constraint %s on %s", c_def["name"], qualified)
         with conn.cursor() as cur:
-            cur.execute(
-                f'ALTER TABLE {qualified} ADD CONSTRAINT "{c_def["name"]}" '
-                f"{c_def['definition']}"
-            )
+            cur.execute(f'ALTER TABLE {qualified} ADD CONSTRAINT "{c_def["name"]}" {c_def["definition"]}')
     conn.commit()
 
 

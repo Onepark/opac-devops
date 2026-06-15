@@ -1,8 +1,8 @@
 from restore_tooling.sanitizer_schema import (
-    SchemaReport,
     SchemaIssue,
-    run_preflight,
+    SchemaReport,
     _check_uncovered,
+    run_preflight,
 )
 
 
@@ -13,12 +13,8 @@ def test_schema_issue_dataclass():
 
 
 def test_schema_report_equality():
-    r1 = SchemaReport(
-        passed=True, issues=(), unique_columns=(), suspicious_uncovered=()
-    )
-    r2 = SchemaReport(
-        passed=True, issues=(), unique_columns=(), suspicious_uncovered=()
-    )
+    r1 = SchemaReport(passed=True, issues=(), unique_columns=(), suspicious_uncovered=())
+    r2 = SchemaReport(passed=True, issues=(), unique_columns=(), suspicious_uncovered=())
     assert r1 == r2
 
 
@@ -64,11 +60,7 @@ class MockCursorWithUnique:
     def fetchall(self):
         if self._call == 1:
             # Return schema columns
-            return [
-                (t, c, dt)
-                for t, cols in self._schema_columns.items()
-                for c, dt in cols.items()
-            ]
+            return [(t, c, dt) for t, cols in self._schema_columns.items() for c, dt in cols.items()]
         # Return unique constraints
         return [(t, c) for t, cols in self._unique_constraints.items() for c in cols]
 
@@ -93,10 +85,10 @@ def test_check_uncovered_simple():
 
 def test_check_uncovered_finds_email():
     from restore_tooling.sanitizer_policy import (
+        BatchConfig,
+        ColumnRule,
         SanitizationPolicy,
         TablePolicy,
-        ColumnRule,
-        BatchConfig,
     )
 
     policy = SanitizationPolicy(
@@ -126,8 +118,8 @@ def test_check_uncovered_finds_email():
 
 def test_check_uncovered_technical_columns_ignored():
     from restore_tooling.sanitizer_policy import (
-        SanitizationPolicy,
         BatchConfig,
+        SanitizationPolicy,
     )
 
     policy = SanitizationPolicy(

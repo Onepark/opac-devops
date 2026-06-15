@@ -70,7 +70,7 @@ def _select_cluster(ecs_client) -> str:
 
 
 def _select_task(ecs_client, cluster: str, service: str) -> str:
-    console.print(f"\nFetching tasks…")
+    console.print("\nFetching tasks…")
     resp = ecs_client.list_tasks(cluster=cluster, serviceName=service)
     task_arns = resp.get("taskArns", [])
 
@@ -163,19 +163,24 @@ def main(
     task_id = task_arn.split("/")[-1]
     console.print(f"Task:      [cyan]{task_id}[/cyan]")
     console.print(f"Container: [cyan]{container}[/cyan]")
-    console.print(f"\n[dim]Ctrl+C to exit the session[/dim]\n")
+    console.print("\n[dim]Ctrl+C to exit the session[/dim]\n")
 
     subprocess.run(
         [
             "aws",
             "ecs",
             "execute-command",
-            "--cluster", cluster,
-            "--task", task_id,
-            "--container", container,
-            "--command", command,
+            "--cluster",
+            cluster,
+            "--task",
+            task_id,
+            "--container",
+            container,
+            "--command",
+            command,
             "--interactive",
-            "--region", AWS_REGION,
+            "--region",
+            AWS_REGION,
         ]
     )
 

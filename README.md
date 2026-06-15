@@ -237,3 +237,9 @@ The default tag is the current git SHA. Override with an explicit second argumen
 ```bash
 images/build-push.sh stg-prod-restore-db-admin 2026-06-03-1
 ```
+
+Images are also built and pushed automatically by the
+[`docker-ecr`](/.github/workflows/docker-ecr.yml) GitHub Actions workflow on
+push to `main`, tag pushes, and manual dispatch. See
+[`docs/ci/docker-ecr.md`](/docs/ci/docker-ecr.md) for setup and operator
+notes.

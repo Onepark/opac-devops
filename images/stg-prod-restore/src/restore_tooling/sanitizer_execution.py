@@ -103,9 +103,7 @@ def _execute_table(
                     while current_lo <= hi:
                         current_hi = min(current_lo + batch_size - 1, hi)
                         batch_start = time.monotonic()
-                        statements = generate_batched_update_sql(
-                            policy, table, current_lo, current_hi
-                        )
+                        statements = generate_batched_update_sql(policy, table, current_lo, current_hi)
                         try:
                             batch_rows = 0
                             for stmt in statements:
@@ -209,9 +207,7 @@ def run_execution(
                     collision.row_count,
                 )
     if failed_collision:
-        raise RuntimeError(
-            f"Collision(s) detected for unique columns: {', '.join(failed_collision)}"
-        )
+        raise RuntimeError(f"Collision(s) detected for unique columns: {', '.join(failed_collision)}")
     logging.info("Collision checks passed")
 
     # Run tables in parallel
@@ -220,10 +216,7 @@ def run_execution(
     executor = ThreadPoolExecutor(max_workers=executor_max)
     try:
         futures = {
-            executor.submit(
-                _execute_table, conn_factory, policy, table, salt
-            ): table.name
-            for table in policy.tables
+            executor.submit(_execute_table, conn_factory, policy, table, salt): table.name for table in policy.tables
         }
         for future in as_completed(futures):
             result = future.result()

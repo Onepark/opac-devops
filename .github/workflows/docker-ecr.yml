@@ -1,0 +1,232 @@
+name: docker-ecr
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["*"]
+  pull_request: {}
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+env:
+  ECR_REGISTRY: 884080474326.dkr.ecr.eu-west-3.amazonaws.com
+  ECR_REPOSITORY: opac-devops
+  AWS_REGION: eu-west-3
+
+jobs:
+  # ── Detect which image groups changed ──────────────────────────────
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      test-db-drift: ${{ steps.result.outputs.test-db-drift }}
+      stg-prod-restore: ${{ steps.result.outputs.stg-prod-restore }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check force-all conditions
+        id: force
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]] || [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "force=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "force=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
+        if: steps.force.outputs.force != 'true'
+        id: filter
+        with:
+          filters: |
+            test-db-drift:
+              - 'images/test-db-drift/**'
+            stg-prod-restore:
+              - 'images/stg-prod-restore/**'
+            force-all:
+              - '.github/workflows/**'
+              - 'mise.toml'
+              - 'images/build-push.sh'
+
+      - name: Compute outputs
+        id: result
+        run: |
+          if [[ "${{ steps.force.outputs.force }}" == "true" ]]; then
+            echo "test-db-drift=true" >> "$GITHUB_OUTPUT"
+            echo "stg-prod-restore=true" >> "$GITHUB_OUTPUT"
+          else
+            force_all="${{ steps.filter.outputs.force-all }}"
+            td="${{ steps.filter.outputs.test-db-drift }}"
+            sp="${{ steps.filter.outputs.stg-prod-restore }}"
+            if [[ "$force_all" == "true" ]]; then
+              td="true"
+              sp="true"
+            fi
+            echo "test-db-drift=${td}" >> "$GITHUB_OUTPUT"
+            echo "stg-prod-restore=${sp}" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ── Build (and optionally push) each image ─────────────────────────
+  build:
+    name: Build ${{ matrix.image.name }}
+    needs: changes
+    if: |
+      needs.changes.outputs.test-db-drift == 'true' ||
+      needs.changes.outputs.stg-prod-restore == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - name: test-db-drift-drifting
+            context: images/test-db-drift
+            dockerfile: Dockerfile-drifting
+            group: test-db-drift
+          - name: test-db-drift-rename-dance
+            context: images/test-db-drift
+            dockerfile: Dockerfile-rename-dance
+            group: test-db-drift
+          - name: test-db-drift-cleanup
+            context: images/test-db-drift
+            dockerfile: Dockerfile-cleanup
+            group: test-db-drift
+          - name: stg-prod-restore-db-admin
+            context: images/stg-prod-restore
+            dockerfile: Dockerfile-db-admin
+            group: stg-prod-restore
+          - name: stg-prod-restore-sanitizer
+            context: images/stg-prod-restore
+            dockerfile: Dockerfile-sanitizer
+            group: stg-prod-restore
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-${{ matrix.image.name }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Should build this image?
+        id: check
+        run: |
+          group="${{ matrix.image.group }}"
+          if [[ "$group" == "test-db-drift" && "${{ needs.changes.outputs.test-db-drift }}" == "true" ]]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$group" == "stg-prod-restore" && "${{ needs.changes.outputs.stg-prod-restore }}" == "true" ]]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Should push to ECR?
+        id: push
+        if: steps.check.outputs.build == 'true'
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "should_push=false" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "should_push=true" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "should_push=true" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "should_push=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_push=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ── AWS / ECR auth (only when pushing) ──
+      - name: Configure AWS credentials
+        if: steps.push.outputs.should_push == 'true'
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        if: steps.push.outputs.should_push == 'true'
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@062b18d96373631f91a0274979211b069c19e3e5 # v2.0.1
+
+      # ── Compute the image tag ──
+      - name: Compute image tag
+        if: steps.check.outputs.build == 'true'
+        id: tag
+        run: |
+          short_sha="${GITHUB_SHA::7}"
+          registry="${{ steps.ecr-login.outputs.registry || env.ECR_REGISTRY }}"
+          echo "uri=${registry}/${{ env.ECR_REPOSITORY }}:${{ matrix.image.name }}-${short_sha}" >> "$GITHUB_OUTPUT"
+
+      # ── Lint & test ──
+      - name: Setup uv
+        if: steps.check.outputs.build == 'true'
+        uses: astral-sh/setup-uv@0c5e2b8115b80b4c7c5ddf6ffdd634974642d182 # v4.2.0
+
+      - name: Run linter
+        if: steps.check.outputs.build == 'true'
+        working-directory: ${{ matrix.image.context }}
+        run: uvx ruff check .
+
+      - name: Run tests
+        if: steps.check.outputs.build == 'true'
+        working-directory: ${{ matrix.image.context }}
+        run: uv run pytest
+
+      # ── Docker build (+ push on main/tags/dispatch) ──
+      - name: Set up Docker Buildx
+        if: steps.check.outputs.build == 'true'
+        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.1
+
+      - name: Build and push
+        if: steps.check.outputs.build == 'true'
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198571cfb76f00 # v6.18.0
+        with:
+          context: ${{ matrix.image.context }}
+          file: ${{ matrix.image.context }}/${{ matrix.image.dockerfile }}
+          platforms: linux/amd64
+          push: ${{ steps.push.outputs.should_push == 'true' }}
+          tags: ${{ steps.tag.outputs.uri }}
+          cache-from: type=gha
+          cache-to: type=gha
+          provenance: false
+
+  # ── Post a sticky PR comment with the image URIs ───────────────────
+  pr-comment:
+    name: PR image list
+    if: github.event_name == 'pull_request' && needs.build.result == 'success'
+    needs: [changes, build]
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Generate image list
+        id: images
+        run: |
+          short_sha="${GITHUB_SHA::7}"
+          registry="${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}"
+          lines=""
+
+          if [[ "${{ needs.changes.outputs.test-db-drift }}" == "true" ]]; then
+            lines="${lines}- \`${registry}:test-db-drift-drifting-${short_sha}\`\n"
+            lines="${lines}- \`${registry}:test-db-drift-rename-dance-${short_sha}\`\n"
+            lines="${lines}- \`${registry}:test-db-drift-cleanup-${short_sha}\`\n"
+          fi
+
+          if [[ "${{ needs.changes.outputs.stg-prod-restore }}" == "true" ]]; then
+            lines="${lines}- \`${registry}:stg-prod-restore-db-admin-${short_sha}\`\n"
+            lines="${lines}- \`${registry}:stg-prod-restore-sanitizer-${short_sha}\`\n"
+          fi
+
+          {
+            echo "lines<<EOF"
+            echo -e "$lines"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: marocchino/sticky-pull-request-comment@52423e01640425a0aef76d38f126a83a459c8484 # v2.9.0
+        with:
+          header: docker-images
+          message: |
+            ### Docker images built (not pushed on PR)
+
+            ${{ steps.images.outputs.lines }}

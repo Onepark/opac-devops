@@ -4,7 +4,6 @@ from typing import Any, Optional
 
 import yaml
 
-
 BUNDLED_POLICY = os.path.join(os.path.dirname(__file__), "sanitization_policy.yaml")
 
 
@@ -97,9 +96,7 @@ def _parse_jsonb_keys(keys: Any) -> tuple[tuple[str, JsonbKeyRule], ...]:
     return tuple(
         (
             k,
-            JsonbKeyRule(
-                strategy=str(v.get("strategy", "")), unique=bool(v.get("unique", False))
-            ),
+            JsonbKeyRule(strategy=str(v.get("strategy", "")), unique=bool(v.get("unique", False))),
         )
         for k, v in keys.items()
     )
@@ -113,21 +110,14 @@ def _parse_column(name: str, raw: Any) -> ColumnRule:
     conditions = raw.get("strategy_by_condition")
     if conditions is not None:
         if not isinstance(conditions, list) or len(conditions) == 0:
-            raise ValueError(
-                f"strategy_by_condition for {name} must be a non-empty list"
-            )
+            raise ValueError(f"strategy_by_condition for {name} must be a non-empty list")
         parsed = tuple(
-            StrategyCondition(
-                where=str(c.get("where", "")), strategy=str(c.get("strategy", ""))
-            )
-            for c in conditions
+            StrategyCondition(where=str(c.get("where", "")), strategy=str(c.get("strategy", ""))) for c in conditions
         )
         return ColumnRule(strategy_by_condition=parsed)
     strategy = raw.get("strategy", "")
     if not strategy:
-        raise ValueError(
-            f"Column {name} has no strategy, type, or strategy_by_condition"
-        )
+        raise ValueError(f"Column {name} has no strategy, type, or strategy_by_condition")
     return ColumnRule(
         strategy=strategy,
         unique=bool(raw.get("unique", False)),
@@ -155,10 +145,7 @@ def load_policy(path: Optional[str] = None) -> SanitizationPolicy:
             raise ValueError(f"Invalid table definition for {table_name}")
         table_batch = _parse_batch(table_raw.get("batch"), defaults_batch)
         columns_raw = table_raw.get("columns", {}) or {}
-        columns = tuple(
-            (col_name, _parse_column(col_name, col_raw))
-            for col_name, col_raw in columns_raw.items()
-        )
+        columns = tuple((col_name, _parse_column(col_name, col_raw)) for col_name, col_raw in columns_raw.items())
         tables.append(TablePolicy(name=table_name, batch=table_batch, columns=columns))
 
     return SanitizationPolicy(
