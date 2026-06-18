@@ -147,6 +147,11 @@ jobs:
         if: steps.push.outputs.should_push == 'true'
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@b040164c4934333d597f3f9c67502ff28f814e9c # v2.1.6
+        with:
+          # The opac-devops repo lives in the root account (884080474326);
+          # the deploy role is in the non-prod account (418484240945).
+          # Log in to the root registry cross-account.
+          registries: 884080474326
 
       # ── Compute the image tag ──
       - name: Compute image tag
@@ -154,7 +159,9 @@ jobs:
         id: tag
         run: |
           short_sha="${GITHUB_SHA::7}"
-          registry="${{ steps.ecr-login.outputs.registry || env.ECR_REGISTRY }}"
+          # Always target the root-account registry (env.ECR_REGISTRY); do not
+          # use steps.ecr-login.outputs.registry, which is the caller account.
+          registry="${{ env.ECR_REGISTRY }}"
           echo "uri=${registry}/${{ env.ECR_REPOSITORY }}:${{ matrix.image.name }}-${short_sha}" >> "$GITHUB_OUTPUT"
 
       # ── Lint & test ──
