@@ -73,7 +73,7 @@ Replace `<org>/<repo>` with the actual GitHub org/repo path.
 | Event | Build | Push to ECR |
 |---|---|---|
 | Pull request | Yes (path-filtered) | No |
-| Push to non-main branch | Yes (path-filtered) | No |
+| Push to non-main branch | No | No |
 | Push to `main` | Yes (path-filtered) | Yes |
 | Tag push (`refs/tags/*`) | Yes (all images) | Yes |
 | `workflow_dispatch` | Yes (all images) | Yes |

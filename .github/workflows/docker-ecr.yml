@@ -2,7 +2,7 @@ name: docker-ecr
 
 on:
   push:
-    branches: ["**"]
+    branches: ["main"]
     tags: ["*"]
   pull_request: {}
   workflow_dispatch: {}
@@ -166,6 +166,11 @@ jobs:
         if: steps.check.outputs.build == 'true'
         working-directory: ${{ matrix.image.context }}
         run: uvx ruff check .
+
+      - name: Check formatting
+        if: steps.check.outputs.build == 'true'
+        working-directory: ${{ matrix.image.context }}
+        run: uvx ruff format --check .
 
       - name: Run tests
         if: steps.check.outputs.build == 'true'
