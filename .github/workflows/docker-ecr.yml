@@ -26,7 +26,7 @@ jobs:
       test-db-drift: ${{ steps.result.outputs.test-db-drift }}
       stg-prod-restore: ${{ steps.result.outputs.stg-prod-restore }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Check force-all conditions
         id: force
@@ -105,7 +105,7 @@ jobs:
       group: ${{ github.workflow }}-${{ github.ref }}-${{ matrix.image.name }}
       cancel-in-progress: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Should build this image?
         id: check
