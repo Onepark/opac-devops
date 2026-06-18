@@ -33,6 +33,17 @@ brew install --cask session-manager-plugin   # not available in mise
 assume onepark-nonprod   # or onepark-prod
 ```
 
+### 4 — Install pre-commit hooks
+
+```bash
+brew install pre-commit
+pre-commit install
+```
+
+Hooks run `ruff check` and `ruff format` on each subproject under `images/`
+using each subproject's own `pyproject.toml` config. Run on demand with
+`pre-commit run --all-files`.
+
 ---
 
 ## test_db.py

@@ -1,0 +1,20 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.11.10
+    hooks:
+      - id: ruff
+        name: ruff check (test-db-drift)
+        args: [--config, images/test-db-drift/pyproject.toml]
+        files: ^images/test-db-drift/
+      - id: ruff
+        name: ruff check (stg-prod-restore)
+        args: [--config, images/stg-prod-restore/pyproject.toml]
+        files: ^images/stg-prod-restore/
+      - id: ruff-format
+        name: ruff format (test-db-drift)
+        args: [--config, images/test-db-drift/pyproject.toml]
+        files: ^images/test-db-drift/
+      - id: ruff-format
+        name: ruff format (stg-prod-restore)
+        args: [--config, images/stg-prod-restore/pyproject.toml]
+        files: ^images/stg-prod-restore/

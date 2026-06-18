@@ -1,7 +1,6 @@
 from unittest.mock import patch
 
 import pytest
-
 from utils.drift import (
     DriftResult,
     apply_drift,
