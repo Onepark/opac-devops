@@ -20,8 +20,7 @@ def _check_old_target_conflict(rds_client, old_target_id: str):
             wait_for_deleted_instance(rds_client, old_target_id)
             return
         raise RuntimeError(
-            f"Cannot rename: {old_target_id} already exists in state '{status}'. "
-            f"Manual cleanup required before retry."
+            f"Cannot rename: {old_target_id} already exists in state '{status}'. Manual cleanup required before retry."
         )
     except rds_client.exceptions.DBInstanceNotFoundFault:
         pass
@@ -47,16 +46,12 @@ def _delete_old_target(rds_client, old_target_id: str):
         return
 
     if status == "deleting":
-        logging.info(
-            f"{old_target_id} is already being deleted — waiting for completion"
-        )
+        logging.info(f"{old_target_id} is already being deleted — waiting for completion")
         wait_for_deleted_instance(rds_client, old_target_id)
         return
 
     if status != "available":
-        raise RuntimeError(
-            f"Cannot delete {old_target_id}: unexpected status '{status}'"
-        )
+        raise RuntimeError(f"Cannot delete {old_target_id}: unexpected status '{status}'")
 
     # Instance is available — initiate deletion
     rds_client.delete_db_instance(
@@ -103,9 +98,7 @@ def main():
     setup_logging()
     target_id = os.environ["TARGET_RDS_INSTANCE_ID"]
     execution_arn = os.environ.get("EXECUTION_ARN", "unknown")
-    logging.info(
-        "=== Step: Rename Dance === execution=%s target=%s", execution_arn, target_id
-    )
+    logging.info("=== Step: Rename Dance === execution=%s target=%s", execution_arn, target_id)
 
     rds = rds_client()
     rename_dance(rds, target_id)

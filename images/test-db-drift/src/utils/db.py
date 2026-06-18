@@ -8,9 +8,7 @@ from utils.aws import wait_for_tcp_port
 
 def get_ephemeral_conn_params(rds_client, ephemeral_id: str) -> dict:
     """Return psycopg2 connect kwargs for the ephemeral RDS instance."""
-    existing = rds_client.describe_db_instances(DBInstanceIdentifier=ephemeral_id)[
-        "DBInstances"
-    ][0]
+    existing = rds_client.describe_db_instances(DBInstanceIdentifier=ephemeral_id)["DBInstances"][0]
     kwargs = {
         "host": existing["Endpoint"]["Address"],
         "port": existing["Endpoint"]["Port"],
@@ -23,9 +21,7 @@ def get_ephemeral_conn_params(rds_client, ephemeral_id: str) -> dict:
         # client blocked forever in recv().
         "keepalives": 1,
         "keepalives_idle": int(os.environ.get("DB_KEEPALIVES_IDLE_SECONDS", "30")),
-        "keepalives_interval": int(
-            os.environ.get("DB_KEEPALIVES_INTERVAL_SECONDS", "10")
-        ),
+        "keepalives_interval": int(os.environ.get("DB_KEEPALIVES_INTERVAL_SECONDS", "10")),
         "keepalives_count": int(os.environ.get("DB_KEEPALIVES_COUNT", "3")),
     }
     sslrootcert = os.environ.get("DB_SSLROOTCERTS", "").strip()
@@ -61,9 +57,7 @@ def get_ephemeral_db_connection(rds_client, ephemeral_id: str):
 
     wait_for_tcp_port(params["host"], params["port"])
 
-    logging.info(
-        f"Connecting to {params['host']}:{params['port']} database={params['dbname']} user={params['user']}"
-    )
+    logging.info(f"Connecting to {params['host']}:{params['port']} database={params['dbname']} user={params['user']}")
     try:
         conn = psycopg2.connect(**params)
         configure_session(conn)

@@ -1,9 +1,9 @@
 from restore_tooling.sanitizer_policy import load_policy
 from restore_tooling.sanitizer_sql import (
+    collision_check_sql,
     column_update_expr,
     generate_update_sql,
     install_helpers_sql,
-    collision_check_sql,
     verify_helpers_sql,
 )
 
@@ -20,10 +20,7 @@ def test_install_helpers_contains_all_functions():
     assert "anon_national_identifier_fr" in sql
     assert "anon_text_token" in sql
     assert "CREATE SCHEMA IF NOT EXISTS restore_sanitizer" in sql
-    assert (
-        "CREATE SCHEMA IF NOT EXISTS restore_sanitizer;\nCREATE OR REPLACE FUNCTION"
-        in sql
-    )
+    assert "CREATE SCHEMA IF NOT EXISTS restore_sanitizer;\nCREATE OR REPLACE FUNCTION" in sql
 
 
 def test_verify_helpers_contains_all():

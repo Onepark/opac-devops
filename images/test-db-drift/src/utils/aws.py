@@ -71,9 +71,7 @@ def setup_logging() -> None:
     )
 
 
-def wait_for_tcp_port(
-    host: str, port: int, max_attempts: int = 30, delay_seconds: int = 10
-) -> None:
+def wait_for_tcp_port(host: str, port: int, max_attempts: int = 30, delay_seconds: int = 10) -> None:
     """Poll TCP port until it accepts connections. Raises RuntimeError on timeout."""
     for attempt in range(1, max_attempts + 1):
         try:
@@ -91,9 +89,7 @@ def wait_for_tcp_port(
                 delay_seconds,
             )
             time.sleep(delay_seconds)
-    raise RuntimeError(
-        f"Could not reach {host}:{port} after {max_attempts * delay_seconds}s"
-    )
+    raise RuntimeError(f"Could not reach {host}:{port} after {max_attempts * delay_seconds}s")
 
 
 def wait_for_deleted_instance(rds_client, db_instance_id: str):
@@ -109,17 +105,11 @@ def wait_for_available_instance(rds_client, db_instance_id: str) -> dict:
         raise RuntimeError("db_instance_id is not defined.")
 
     logging.info(f"Waiting for RDS instance: {db_instance_id}")
-    waiter = botocore.waiter.create_waiter_with_client(
-        "DBInstanceAvailable", _WAITER_MODEL, rds_client
-    )
+    waiter = botocore.waiter.create_waiter_with_client("DBInstanceAvailable", _WAITER_MODEL, rds_client)
     waiter.wait(DBInstanceIdentifier=db_instance_id)
 
-    instance = rds_client.describe_db_instances(DBInstanceIdentifier=db_instance_id)[
-        "DBInstances"
-    ][0]
-    logging.info(
-        f"RDS instance ready: {db_instance_id} (status={instance['DBInstanceStatus']})"
-    )
+    instance = rds_client.describe_db_instances(DBInstanceIdentifier=db_instance_id)["DBInstances"][0]
+    logging.info(f"RDS instance ready: {db_instance_id} (status={instance['DBInstanceStatus']})")
 
     return {
         "db_status": instance["DBInstanceStatus"],

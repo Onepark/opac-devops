@@ -1,7 +1,7 @@
 from restore_tooling.sanitizer_policy import (
     SanitizationPolicy,
-    load_policy,
     known_strategies,
+    load_policy,
 )
 
 

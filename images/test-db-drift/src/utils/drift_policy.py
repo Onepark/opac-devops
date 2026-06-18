@@ -6,9 +6,7 @@ from typing import Any
 
 import yaml
 
-BUNDLED_POLICY = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)), "drift_policy.yaml"
-)
+BUNDLED_POLICY = os.path.join(os.path.dirname(os.path.dirname(__file__)), "drift_policy.yaml")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -79,29 +77,22 @@ def run_preflight(cursor, policy: DriftPolicy) -> list[str]:
     # Check tables exist
     for table_name, columns in policy.tables:
         cursor.execute(
-            "SELECT 1 FROM information_schema.tables "
-            "WHERE table_schema = %s AND table_name = %s",
+            "SELECT 1 FROM information_schema.tables WHERE table_schema = %s AND table_name = %s",
             (policy.schema_name, table_name),
         )
         if cursor.fetchone() is None:
-            errors.append(
-                f"Table '{policy.schema_name}.{table_name}' not found in schema"
-            )
+            errors.append(f"Table '{policy.schema_name}.{table_name}' not found in schema")
             continue
 
         # Check each column exists and is a date/timestamp type
         cursor.execute(
-            "SELECT column_name, data_type FROM information_schema.columns "
-            "WHERE table_schema = %s AND table_name = %s",
+            "SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = %s AND table_name = %s",
             (policy.schema_name, table_name),
         )
         existing = {row[0]: row[1] for row in cursor.fetchall()}
         for col in columns:
             if col not in existing:
-                errors.append(
-                    f"Column '{policy.schema_name}.{table_name}.{col}' "
-                    f"not found in schema"
-                )
+                errors.append(f"Column '{policy.schema_name}.{table_name}.{col}' not found in schema")
             elif existing[col] not in VALID_DATE_TYPES:
                 errors.append(
                     f"Column '{policy.schema_name}.{table_name}.{col}' "

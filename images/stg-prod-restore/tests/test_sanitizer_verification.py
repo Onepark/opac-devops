@@ -22,9 +22,7 @@ def test_verification_warn_mode_does_not_fail_report():
         tables=(policy.find_table("customers"),),
     )
 
-    report = run_verification(
-        FakeCursor(("customers.email", 10, 1)), policy, mode="warn"
-    )
+    report = run_verification(FakeCursor(("customers.email", 10, 1)), policy, mode="warn")
 
     assert report.passed is True
     assert report.results[0].failed == 1
@@ -39,8 +37,6 @@ def test_verification_fail_mode_fails_report():
         tables=(policy.find_table("customers"),),
     )
 
-    report = run_verification(
-        FakeCursor(("customers.email", 10, 1)), policy, mode="fail"
-    )
+    report = run_verification(FakeCursor(("customers.email", 10, 1)), policy, mode="fail")
 
     assert report.passed is False

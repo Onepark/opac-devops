@@ -72,9 +72,7 @@ class SchemaReport:
     suspicious_uncovered: tuple[tuple[str, str], ...]
 
 
-def _resolve_table_columns(
-    cursor: Any, policy: SanitizationPolicy
-) -> dict[str, dict[str, str]]:
+def _resolve_table_columns(cursor: Any, policy: SanitizationPolicy) -> dict[str, dict[str, str]]:
     """Returns {table_name: {column_name: data_type}} for all configured tables.
 
     For ARRAY columns, data_type is reported as 'ARRAY' by information_schema.
@@ -107,9 +105,7 @@ def _resolve_table_columns(
     return result
 
 
-def _resolve_unique_constraints(
-    cursor: Any, policy: SanitizationPolicy
-) -> dict[str, set[str]]:
+def _resolve_unique_constraints(cursor: Any, policy: SanitizationPolicy) -> dict[str, set[str]]:
     """Returns {table_name: {column_name}} for single-column unique constraints."""
     tables = [t.name for t in policy.tables]
     if not tables:
@@ -180,20 +176,14 @@ def run_preflight(
     for table in policy.tables:
         table_cols = schema_columns.get(table.name)
         if table_cols is None:
-            issues.append(
-                SchemaIssue("error", f"Table '{table.name}' not found in schema")
-            )
+            issues.append(SchemaIssue("error", f"Table '{table.name}' not found in schema"))
             continue
 
         for col_name, rule in table.columns:
             if rule.is_jsonb():
                 actual_type = table_cols.get(col_name)
                 if actual_type is None:
-                    issues.append(
-                        SchemaIssue(
-                            "error", f"Column '{table.name}.{col_name}' not found"
-                        )
-                    )
+                    issues.append(SchemaIssue("error", f"Column '{table.name}.{col_name}' not found"))
                 elif actual_type not in ("json", "jsonb"):
                     issues.append(
                         SchemaIssue(
@@ -212,11 +202,7 @@ def run_preflight(
             elif rule.is_conditional():
                 actual_type = table_cols.get(col_name)
                 if actual_type is None:
-                    issues.append(
-                        SchemaIssue(
-                            "error", f"Column '{table.name}.{col_name}' not found"
-                        )
-                    )
+                    issues.append(SchemaIssue("error", f"Column '{table.name}.{col_name}' not found"))
                 for cond in rule.strategy_by_condition:
                     if not cond.strategy:
                         issues.append(
@@ -235,11 +221,7 @@ def run_preflight(
             elif rule.is_normal():
                 actual_type = table_cols.get(col_name)
                 if actual_type is None:
-                    issues.append(
-                        SchemaIssue(
-                            "error", f"Column '{table.name}.{col_name}' not found"
-                        )
-                    )
+                    issues.append(SchemaIssue("error", f"Column '{table.name}.{col_name}' not found"))
                 elif rule.array:
                     # Expect ARRAY with text-compatible element type
                     if not actual_type.startswith("ARRAY:"):
@@ -337,8 +319,6 @@ def run_preflight(
     return SchemaReport(
         passed=len(errors) == 0,
         issues=tuple(issues),
-        unique_columns=tuple(
-            (t, c) for t, cols in unique_constraints.items() for c in cols
-        ),
+        unique_columns=tuple((t, c) for t, cols in unique_constraints.items() for c in cols),
         suspicious_uncovered=tuple(suspicious),
     )

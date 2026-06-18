@@ -1,9 +1,9 @@
+import dataclasses
 import json
 import logging
 import os
 import sys
 import time
-import dataclasses
 from typing import Callable
 
 from .common import (
@@ -38,9 +38,7 @@ REQUIRED_ENV = [
 
 def _validate_env(env: dict[str, str]) -> None:
     if env["SLOT_NAME"] not in {"blue", "green"}:
-        raise RuntimeError(
-            f"Invalid SLOT_NAME {env['SLOT_NAME']}; expected blue or green"
-        )
+        raise RuntimeError(f"Invalid SLOT_NAME {env['SLOT_NAME']}; expected blue or green")
     int(env["DB_PORT"])
 
 
@@ -62,13 +60,9 @@ def _conn_factory(env: dict[str, str], app_secret) -> Callable:
 def _preflight(env: dict[str, str]) -> tuple:
     """Run non-mutating preflight checks. Returns (policy, report)."""
     policy = load_policy()
-    logging.info(
-        "Loaded policy version %d with %d tables", policy.version, len(policy.tables)
-    )
+    logging.info("Loaded policy version %d with %d tables", policy.version, len(policy.tables))
 
-    app_secret = get_app_secret(
-        client("secretsmanager", env["AWS_REGION"]), env["APP_SECRET_ARN"]
-    )
+    app_secret = get_app_secret(client("secretsmanager", env["AWS_REGION"]), env["APP_SECRET_ARN"])
     wait_for_tcp_port(env["DB_HOST"], int(env["DB_PORT"]))
 
     uncovered_mode = os.environ.get("SANITIZER_UNCOVERED_PII_MODE", "warn")
@@ -114,12 +108,8 @@ def _log_preflight_report(policy, report, duration_seconds: float) -> None:
         "policy_version": policy.version,
         "tables_configured": len(policy.tables),
         "preflight_passed": report.passed,
-        "preflight_issues": [
-            {"severity": i.severity, "message": i.message} for i in report.issues
-        ],
-        "suspicious_uncovered": [
-            {"table": t, "column": c} for t, c in report.suspicious_uncovered
-        ],
+        "preflight_issues": [{"severity": i.severity, "message": i.message} for i in report.issues],
+        "suspicious_uncovered": [{"table": t, "column": c} for t, c in report.suspicious_uncovered],
         "duration_seconds": round(duration_seconds, 2),
     }
     logging.info("Preflight summary: %s", json.dumps(summary, indent=2))
@@ -221,18 +211,14 @@ def cmd_sanitize() -> None:
                 ],
             },
             "duration_seconds": round(total_duration, 2),
-            "status": "passed"
-            if exec_report.passed and verify_report.passed
-            else "failed",
+            "status": "passed" if exec_report.passed and verify_report.passed else "failed",
         }
         logging.info("Sanitization summary: %s", json.dumps(summary, indent=2))
 
         if not exec_report.passed or not verify_report.passed:
             raise RuntimeError("Sanitization completed with failures")
 
-        mark_passed(
-            dynamodb, env["STATE_TABLE_NAME"], env["SLOT_NAME"], "sanitizationStatus"
-        )
+        mark_passed(dynamodb, env["STATE_TABLE_NAME"], env["SLOT_NAME"], "sanitizationStatus")
     except Exception as exc:
         error = compact_error(exc)
         logging.exception("Sanitization failed: %s", error)
@@ -250,9 +236,7 @@ def cmd_sanitize() -> None:
 def main() -> None:
     setup_logging()
     if len(sys.argv) != 2:
-        raise SystemExit(
-            "Usage: python -m restore_tooling.sanitizer <preflight|sanitize>"
-        )
+        raise SystemExit("Usage: python -m restore_tooling.sanitizer <preflight|sanitize>")
 
     mode = sys.argv[1]
     if mode == "preflight":

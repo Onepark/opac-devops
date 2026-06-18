@@ -12,7 +12,6 @@ from utils.drift import (
 )
 from utils.drift_policy import DriftPolicy
 
-
 # ---------------------------------------------------------------------------
 # Helpers — lightweight fakes that capture SQL without a real DB
 # ---------------------------------------------------------------------------
@@ -74,9 +73,7 @@ def _make_policy(tables: dict[str, list[str]]) -> DriftPolicy:
 
 def test_drift_table_generates_schema_qualified_sql():
     conn = FakeConn(rowcount=100)
-    row_count = drift_table(
-        conn, "public", "customers", ("inserted_at", "updated_at"), 7
-    )
+    row_count = drift_table(conn, "public", "customers", ("inserted_at", "updated_at"), 7)
     assert row_count == 100
     assert conn.committed == 1
 

@@ -11,9 +11,7 @@ from psycopg2 import sql
 from .common import AppSecret
 
 
-def wait_for_tcp_port(
-    host: str, port: int, max_attempts: int = 30, delay_seconds: int = 10
-) -> None:
+def wait_for_tcp_port(host: str, port: int, max_attempts: int = 30, delay_seconds: int = 10) -> None:
     for attempt in range(1, max_attempts + 1):
         try:
             with socket.create_connection((host, port), timeout=5):
@@ -31,9 +29,7 @@ def wait_for_tcp_port(
             )
             time.sleep(delay_seconds)
 
-    raise RuntimeError(
-        f"Could not reach {host}:{port} after {max_attempts * delay_seconds}s"
-    )
+    raise RuntimeError(f"Could not reach {host}:{port} after {max_attempts * delay_seconds}s")
 
 
 def wait_for_rds_available(rds, db_identifier: str) -> None:
@@ -49,9 +45,7 @@ def describe_instance(rds, db_identifier: str) -> dict:
     response = rds.describe_db_instances(DBInstanceIdentifier=db_identifier)
     instances = response.get("DBInstances", [])
     if len(instances) != 1:
-        raise RuntimeError(
-            f"Expected exactly one DB instance for {db_identifier}, got {len(instances)}"
-        )
+        raise RuntimeError(f"Expected exactly one DB instance for {db_identifier}, got {len(instances)}")
     return instances[0]
 
 
@@ -78,9 +72,7 @@ def connect(
         # server-side and is useless if the socket itself is dead.
         "keepalives": 1,
         "keepalives_idle": int(os.environ.get("DB_KEEPALIVES_IDLE_SECONDS", "30")),
-        "keepalives_interval": int(
-            os.environ.get("DB_KEEPALIVES_INTERVAL_SECONDS", "10")
-        ),
+        "keepalives_interval": int(os.environ.get("DB_KEEPALIVES_INTERVAL_SECONDS", "10")),
         "keepalives_count": int(os.environ.get("DB_KEEPALIVES_COUNT", "3")),
     }
     sslrootcert = os.environ.get("DB_SSLROOTCERTS", "").strip()
@@ -124,15 +116,11 @@ def _configure_session(conn: psycopg2.extensions.connection) -> None:
             with conn.cursor() as cursor:
                 cursor.execute("SET session_replication_role = 'replica'")
             conn.commit()
-            logging.info(
-                "session_replication_role set to 'replica' (triggers disabled "
-                "for bulk anonymization)"
-            )
+            logging.info("session_replication_role set to 'replica' (triggers disabled for bulk anonymization)")
         except psycopg2.Error as exc:
             conn.rollback()
             logging.warning(
-                "Could not set session_replication_role=replica (%s); "
-                "continuing with triggers enabled",
+                "Could not set session_replication_role=replica (%s); continuing with triggers enabled",
                 exc,
             )
 
@@ -164,17 +152,13 @@ def reconcile_app_role(conn, app_secret: AppSecret) -> None:
         if role_exists:
             logging.info("Altering existing app role %s", role_name)
             cursor.execute(
-                sql.SQL("ALTER ROLE {} WITH LOGIN PASSWORD %s").format(
-                    sql.Identifier(role_name)
-                ),
+                sql.SQL("ALTER ROLE {} WITH LOGIN PASSWORD %s").format(sql.Identifier(role_name)),
                 (password,),
             )
         else:
             logging.info("Creating app role %s", role_name)
             cursor.execute(
-                sql.SQL("CREATE ROLE {} WITH LOGIN PASSWORD %s").format(
-                    sql.Identifier(role_name)
-                ),
+                sql.SQL("CREATE ROLE {} WITH LOGIN PASSWORD %s").format(sql.Identifier(role_name)),
                 (password,),
             )
 
@@ -184,20 +168,16 @@ def reconcile_app_role(conn, app_secret: AppSecret) -> None:
                 sql.Identifier(role_name),
             )
         )
+        cursor.execute(sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(sql.Identifier(role_name)))
         cursor.execute(
-            sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(
+            sql.SQL("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {}").format(
                 sql.Identifier(role_name)
             )
         )
         cursor.execute(
-            sql.SQL(
-                "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {}"
-            ).format(sql.Identifier(role_name))
-        )
-        cursor.execute(
-            sql.SQL(
-                "GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO {}"
-            ).format(sql.Identifier(role_name))
+            sql.SQL("GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO {}").format(
+                sql.Identifier(role_name)
+            )
         )
 
     conn.commit()

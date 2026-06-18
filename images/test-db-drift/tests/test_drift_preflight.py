@@ -1,4 +1,4 @@
-from utils.drift_policy import DriftPolicy, run_preflight, VALID_DATE_TYPES
+from utils.drift_policy import VALID_DATE_TYPES, DriftPolicy, run_preflight
 
 
 class MockCursor:
@@ -28,10 +28,7 @@ class MockCursor:
         if "information_schema.columns" in self._last_query:
             table_name = self._last_params[1]
             if table_name in self._schema_tables:
-                return [
-                    (col_name, col_type)
-                    for col_name, col_type in self._schema_tables[table_name].items()
-                ]
+                return [(col_name, col_type) for col_name, col_type in self._schema_tables[table_name].items()]
         return []
 
     def __enter__(self):

@@ -21,7 +21,6 @@ from .db import (
 )
 from .state import mark_failed, mark_passed, mark_running
 
-
 COMMON_ENV = [
     "AWS_REGION",
     "SLOT_NAME",
@@ -38,9 +37,7 @@ COMMON_ENV = [
 
 def _validate_slot(env: dict[str, str]) -> None:
     if env["SLOT_NAME"] not in {"blue", "green"}:
-        raise RuntimeError(
-            f"Invalid SLOT_NAME {env['SLOT_NAME']}; expected blue or green"
-        )
+        raise RuntimeError(f"Invalid SLOT_NAME {env['SLOT_NAME']}; expected blue or green")
     int(env["DB_PORT"])
 
 
@@ -62,9 +59,7 @@ def credential_reconcile() -> None:
 
     try:
         app_secret = get_app_secret(secretsmanager, env["APP_SECRET_ARN"])
-        admin_password = get_secret_string(
-            secretsmanager, env["ADMIN_SECRET_ARN"]
-        ).strip()
+        admin_password = get_secret_string(secretsmanager, env["ADMIN_SECRET_ARN"]).strip()
         if not admin_password:
             raise RuntimeError("Admin secret is empty")
 
@@ -86,9 +81,7 @@ def credential_reconcile() -> None:
         ) as conn:
             reconcile_app_role(conn, app_secret)
 
-        mark_passed(
-            dynamodb, env["STATE_TABLE_NAME"], env["SLOT_NAME"], "credentialStatus"
-        )
+        mark_passed(dynamodb, env["STATE_TABLE_NAME"], env["SLOT_NAME"], "credentialStatus")
     except Exception as exc:
         error = compact_error(exc)
         logging.exception("Credential reconciliation failed: %s", error)
@@ -132,13 +125,9 @@ def validate() -> None:
 
         expected_major = env["EXPECTED_POSTGRES_MAJOR_VERSION"]
         if actual_major != expected_major:
-            raise RuntimeError(
-                f"PostgreSQL major version mismatch: expected {expected_major}, got {actual_major}"
-            )
+            raise RuntimeError(f"PostgreSQL major version mismatch: expected {expected_major}, got {actual_major}")
 
-        mark_passed(
-            dynamodb, env["STATE_TABLE_NAME"], env["SLOT_NAME"], "validationStatus"
-        )
+        mark_passed(dynamodb, env["STATE_TABLE_NAME"], env["SLOT_NAME"], "validationStatus")
     except Exception as exc:
         error = compact_error(exc)
         logging.exception("Validation failed: %s", error)

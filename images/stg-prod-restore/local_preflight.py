@@ -18,24 +18,23 @@ Optional env vars:
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import os
 import sys
 import time
-import dataclasses
 
 import psycopg2
 
 # Ensure src/ is on the path so restore_tooling is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
+# Collision checks need the execution module which imports from restore_tooling
+from restore_tooling.sanitizer_execution import run_collision_checks
 from restore_tooling.sanitizer_policy import load_policy
 from restore_tooling.sanitizer_schema import SchemaIssue, run_preflight
 from restore_tooling.sanitizer_sql import install_helpers_sql, verify_helpers_sql
-
-# Collision checks need the execution module which imports from restore_tooling
-from restore_tooling.sanitizer_execution import run_collision_checks
 
 
 def _log_preflight_report(policy, report, duration_seconds: float) -> None:
@@ -44,12 +43,8 @@ def _log_preflight_report(policy, report, duration_seconds: float) -> None:
         "policy_version": policy.version,
         "tables_configured": len(policy.tables),
         "preflight_passed": report.passed,
-        "preflight_issues": [
-            {"severity": i.severity, "message": i.message} for i in report.issues
-        ],
-        "suspicious_uncovered": [
-            {"table": t, "column": c} for t, c in report.suspicious_uncovered
-        ],
+        "preflight_issues": [{"severity": i.severity, "message": i.message} for i in report.issues],
+        "suspicious_uncovered": [{"table": t, "column": c} for t, c in report.suspicious_uncovered],
         "duration_seconds": round(duration_seconds, 2),
     }
     logging.info("Preflight summary:\n%s", json.dumps(summary, indent=2))
@@ -78,9 +73,7 @@ def main() -> None:
     salt = os.environ.get("ANONYMISATION_SALT", "local-test-salt")
     run_collisions = os.environ.get("RUN_COLLISION_CHECKS", "false").lower() == "true"
 
-    logging.info(
-        "Connecting to %s:%s/%s as %s (sslmode=%s)", host, port, dbname, user, sslmode
-    )
+    logging.info("Connecting to %s:%s/%s as %s (sslmode=%s)", host, port, dbname, user, sslmode)
 
     start = time.monotonic()
 
@@ -108,9 +101,7 @@ def main() -> None:
 
         with conn:
             with conn.cursor() as cursor:
-                report = run_preflight(
-                    cursor, policy, uncovered_pii_mode=uncovered_mode
-                )
+                report = run_preflight(cursor, policy, uncovered_pii_mode=uncovered_mode)
 
         duration = time.monotonic() - start
         _log_preflight_report(policy, report, duration)
@@ -128,9 +119,7 @@ def main() -> None:
             logging.info("Running collision checks...")
             with conn:
                 with conn.cursor() as cursor:
-                    collisions = run_collision_checks(
-                        cursor, policy, salt, report.unique_columns
-                    )
+                    collisions = run_collision_checks(cursor, policy, salt, report.unique_columns)
 
             if collisions:
                 collision_issues = tuple(

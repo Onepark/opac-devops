@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-
 from .sanitizer_names import first_names, last_names
 from .sanitizer_policy import (
     ColumnRule,
@@ -123,9 +122,7 @@ def fn_phone_fr() -> str:
 
 
 def fn_first_name() -> str:
-    return _gen_fn(
-        "anon_first_name", strategy_value_expr("value", "salt", "first_name")
-    )
+    return _gen_fn("anon_first_name", strategy_value_expr("value", "salt", "first_name"))
 
 
 def fn_last_name() -> str:
@@ -133,9 +130,7 @@ def fn_last_name() -> str:
 
 
 def fn_company_name() -> str:
-    return _gen_fn(
-        "anon_company_name", strategy_value_expr("value", "salt", "company_name")
-    )
+    return _gen_fn("anon_company_name", strategy_value_expr("value", "salt", "company_name"))
 
 
 def fn_license_plate_fr() -> str:
@@ -157,9 +152,7 @@ def fn_national_identifier_fr() -> str:
 
 
 def fn_text_token() -> str:
-    return _gen_fn(
-        "anon_text_token", strategy_value_expr("value", "salt", "text_token")
-    )
+    return _gen_fn("anon_text_token", strategy_value_expr("value", "salt", "text_token"))
 
 
 def _gen_fn(fn_name: str, body_expr: str) -> str:
@@ -217,11 +210,7 @@ def jsonb_key_update_expr(jsonb_column: str, jsonb_key: str, strategy: str) -> s
     fn = _FN_MAP[strategy]
     col_q = _quote_ident(jsonb_column)
     key_lit = _quote_literal(jsonb_key)
-    return (
-        f"jsonb_set({col_q}, "
-        f"ARRAY[{key_lit}], "
-        f"to_jsonb({fn}(({col_q} ->> {key_lit})::text, %(salt)s)), false)"
-    )
+    return f"jsonb_set({col_q}, ARRAY[{key_lit}], to_jsonb({fn}(({col_q} ->> {key_lit})::text, %(salt)s)), false)"
 
 
 def jsonb_column_update_expr(jsonb_column: str, rule: ColumnRule) -> str:
@@ -230,10 +219,7 @@ def jsonb_column_update_expr(jsonb_column: str, rule: ColumnRule) -> str:
     for key, key_rule in rule.jsonb_keys:
         fn = _FN_MAP[key_rule.strategy]
         key_lit = _quote_literal(key)
-        expr = (
-            f"jsonb_set({expr}, ARRAY[{key_lit}], "
-            f"to_jsonb({fn}(({col_q} ->> {key_lit})::text, %(salt)s)), false)"
-        )
+        expr = f"jsonb_set({expr}, ARRAY[{key_lit}], to_jsonb({fn}(({col_q} ->> {key_lit})::text, %(salt)s)), false)"
     return f"{col_q} = {expr}"
 
 
@@ -269,13 +255,10 @@ def generate_update_sql(
                 col_q = _quote_ident(col_name)
                 fn = _FN_MAP[condition.strategy]
                 other_statements.append(
-                    f"UPDATE {qualified} SET {col_q} = {fn}({col_q}::text, %(salt)s)"
-                    f" WHERE {condition.where}"
+                    f"UPDATE {qualified} SET {col_q} = {fn}({col_q}::text, %(salt)s) WHERE {condition.where}"
                 )
         elif rule.is_normal():
-            normal_assignments.append(
-                column_update_expr(col_name, rule.strategy, rule.array)
-            )
+            normal_assignments.append(column_update_expr(col_name, rule.strategy, rule.array))
 
     statements: list[str] = []
     if normal_assignments:
@@ -306,12 +289,7 @@ def generate_batched_update_sql(
     for stmt in base:
         where_idx = stmt.find(" WHERE ")
         if where_idx >= 0:
-            stmt = (
-                stmt[:where_idx]
-                + f" WHERE ({key} BETWEEN %(lo)s AND %(hi)s)"
-                + " AND "
-                + stmt[where_idx + 7 :]
-            )
+            stmt = stmt[:where_idx] + f" WHERE ({key} BETWEEN %(lo)s AND %(hi)s)" + " AND " + stmt[where_idx + 7 :]
         else:
             stmt = stmt + f" WHERE ({key} BETWEEN %(lo)s AND %(hi)s)"
         result.append(stmt)
