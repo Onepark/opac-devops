@@ -195,8 +195,8 @@ inline Route53 cutover policy attached (added in
 `envs/non-prod/shared/main.tf`).
 
 ```bash
-mise run stg-db switch                 # or: uv run stg_db.py switch
-mise run stg-db -- switch --dry-run    # preview only, no AWS mutation
+mise run stg-db                            # or: uv run stg_db.py
+mise run stg-db -- --dry-run               # preview only, no AWS mutation
 ```
 
 | Option | Default | Description |
@@ -204,21 +204,29 @@ mise run stg-db -- switch --dry-run    # preview only, no AWS mutation
 | `--dry-run` | `false` | Print the plan and exit without mutating anything |
 | `--requester` | `$USER` | Audit metadata: who is promoting |
 | `--reason` | `""` | Audit metadata: why are you promoting? |
+| `--restart-tasks`/`--no-restart-tasks` | `--restart-tasks` | Force a new deployment of the staging ECS API service after the cutover so tasks reconnect to the new RDS |
 
 **Examples**
 
 ```bash
 # Preview which slot would be promoted
-uv run stg_db.py switch --dry-run
+uv run stg_db.py --dry-run
 
 # Promote with a reason for the audit record
-uv run stg_db.py switch --reason "QA requested latest snapshot"
+uv run stg_db.py --reason "QA requested latest snapshot"
 
 # Audit trail lookup
 aws dynamodb get-item \
   --table-name opk-opac-stg-prod-restore-state \
   --key '{"pk": {"S": "PROMOTION#2026w23"}}'
 ```
+
+By default a successful switch also forces a new deployment of the staging ECS
+API service (`opk-opac-stg-ecs-service`) so its tasks recycle and establish
+fresh DB connection pools against the new RDS — the previous RDS is destroyed
+in the same switch, so existing pooled connections would otherwise break. Pass
+`--no-restart-tasks` to skip the recycle (the script then prints the manual
+`aws ecs update-service` command).
 
 If no slot is `readyForQa`, the script exits non-zero with
 `no slot is ready; trigger or wait for a reconcile`. The cutover is a no-op

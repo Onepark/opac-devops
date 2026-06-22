@@ -48,6 +48,12 @@ BLUE_DB_IDENTIFIER = os.environ.get(
 GREEN_DB_IDENTIFIER = os.environ.get(
     "OPAC_STG_DB_GREEN", "opk-opac-stg-prod-restore-green"
 )
+ECS_CLUSTER_NAME = os.environ.get(
+    "OPAC_STG_DB_ECS_CLUSTER", "opk-opac-stg-ecs-cluster"
+)
+ECS_SERVICE_NAME = os.environ.get(
+    "OPAC_STG_DB_ECS_SERVICE", "opk-opac-stg-ecs-service"
+)
 
 SLOT_IDENTIFIERS = {"blue": BLUE_DB_IDENTIFIER, "green": GREEN_DB_IDENTIFIER}
 
@@ -265,6 +271,67 @@ def _destroy_rds(rds_client, db_identifier: str) -> None:
         )
 
 
+def _print_restart_hint(cluster_name: str, service_name: str) -> None:
+    console.print(
+        f"[dim]hint[/dim] Cutover succeeded; restart the staging API tasks "
+        f"manually: `aws ecs update-service --cluster {cluster_name} "
+        f"--service {service_name} --force-new-deployment`."
+    )
+
+
+def _restart_ecs_tasks(ecs_client, cluster_name: str, service_name: str) -> None:
+    """Force a new deployment of the staging ECS API service (soft failure)."""
+    try:
+        desc = ecs_client.describe_services(
+            cluster=cluster_name, services=[service_name]
+        )
+    except ClientError as exc:
+        console.print(
+            f"[yellow]![/yellow] Could not describe ECS service "
+            f"{service_name!r} on cluster {cluster_name!r}: "
+            f"{_client_error_message(exc)}"
+        )
+        _print_restart_hint(cluster_name, service_name)
+        return
+
+    services = desc.get("services") or []
+    if not services:
+        console.print(
+            f"[yellow]![/yellow] ECS service {service_name!r} not found on "
+            f"cluster {cluster_name!r}. Set OPAC_STG_DB_ECS_CLUSTER / "
+            f"OPAC_STG_DB_ECS_SERVICE to the correct names."
+        )
+        _print_restart_hint(cluster_name, service_name)
+        return
+
+    status = services[0].get("status")
+    if status != "ACTIVE":
+        console.print(
+            f"[yellow]![/yellow] ECS service {service_name!r} status is "
+            f"{status!r} (not ACTIVE); skipping forced redeployment."
+        )
+        _print_restart_hint(cluster_name, service_name)
+        return
+
+    try:
+        ecs_client.update_service(
+            cluster=cluster_name,
+            service=service_name,
+            forceNewDeployment=True,
+        )
+        console.print(
+            f"[green]✓[/green] Forced new deployment of ECS service "
+            f"{service_name!r} on cluster {cluster_name!r} "
+            f"(tasks recycle against the new RDS)."
+        )
+    except ClientError as exc:
+        console.print(
+            f"[yellow]![/yellow] ECS update-service failed: "
+            f"{_client_error_message(exc)}"
+        )
+        _print_restart_hint(cluster_name, service_name)
+
+
 def _write_audit(dynamodb_resource, audit: dict) -> bool:
     table = dynamodb_resource.Table(STATE_TABLE_NAME)
     try:
@@ -283,6 +350,7 @@ def _build_plan(
     chosen: dict,
     blue_doc: Optional[dict],
     green_doc: Optional[dict],
+    restart_tasks: bool,
 ) -> dict:
     chosen_slot = chosen["slot"]
     other_doc = green_doc if chosen_slot == "blue" else blue_doc
@@ -301,6 +369,7 @@ def _build_plan(
         "previous_db_identifier": (
             SLOT_IDENTIFIERS[previous_active_slot] if previous_active_slot else None
         ),
+        "restart_tasks": restart_tasks,
     }
 
 
@@ -323,6 +392,12 @@ def _print_plan(plan: dict) -> None:
     )
     if plan["previous_db_identifier"]:
         table.add_row("RDS to destroy", plan["previous_db_identifier"])
+    table.add_row(
+        "Post-switch task restart",
+        "yes (force new deployment)"
+        if plan["restart_tasks"]
+        else "[dim]skipped (--no-restart-tasks)[/dim]",
+    )
     console.print(table)
 
 
@@ -348,6 +423,14 @@ def switch(
         "--reason",
         help="Audit metadata: why are you promoting?",
     ),
+    restart_tasks: bool = typer.Option(
+        True,
+        "--restart-tasks/--no-restart-tasks",
+        help=(
+            "Force a new deployment of the staging ECS API service after the "
+            "cutover so tasks reconnect to the new RDS (default: on)."
+        ),
+    ),
 ) -> None:
     console.rule("[bold blue]Staging DB Switch[/bold blue]")
 
@@ -358,6 +441,7 @@ def switch(
         "dynamodb", region_name=AWS_REGION, config=RETRY_CONFIG
     )
     rds_client = boto3.client("rds", region_name=AWS_REGION, config=RETRY_CONFIG)
+    ecs_client = boto3.client("ecs", region_name=AWS_REGION, config=RETRY_CONFIG)
 
     # --- Step 1: current Route53 cutover target ---
     try:
@@ -399,7 +483,7 @@ def switch(
         )
         raise typer.Exit(0)
 
-    plan = _build_plan(zone_id, current_target, chosen, blue_doc, green_doc)
+    plan = _build_plan(zone_id, current_target, chosen, blue_doc, green_doc, restart_tasks)
 
     console.print("\n[bold]Plan[/bold]")
     _print_plan(plan)
@@ -474,6 +558,17 @@ def switch(
         "destroyed_slot": destroyed_slot,
     }
     audit_ok = _write_audit(dynamodb_resource, audit)
+
+    # --- Step 6.6: restart staging ECS tasks (default) ---
+    if restart_tasks:
+        _restart_ecs_tasks(ecs_client, ECS_CLUSTER_NAME, ECS_SERVICE_NAME)
+    else:
+        console.print(
+            "[dim]hint[/dim] --no-restart-tasks: staging ECS tasks were not "
+            "recycled. Run `aws ecs update-service --cluster "
+            f"{ECS_CLUSTER_NAME} --service {ECS_SERVICE_NAME} "
+            "--force-new-deployment` to establish fresh DB connections."
+        )
 
     console.print(
         f"\n[green]✓[/green] Promoted [cyan]{plan['chosen_slot']}[/cyan] → "
