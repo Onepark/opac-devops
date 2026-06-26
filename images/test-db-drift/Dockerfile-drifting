@@ -19,7 +19,8 @@ WORKDIR /app
 
 COPY --from=builder /app/.venv .venv
 COPY src/step-drifting.py src/step-drifting.py
-COPY src/utils/aws.py src/utils/db.py src/utils/__init__.py /app/.venv/lib/python3.12/site-packages/utils/
+COPY src/utils/ /app/.venv/lib/python3.12/site-packages/utils/
+COPY src/drift_policy.yaml /app/.venv/lib/python3.12/site-packages/drift_policy.yaml
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
