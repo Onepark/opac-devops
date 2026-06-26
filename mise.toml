@@ -5,8 +5,8 @@ doppler = "latest"
 "ubi:common-fate/granted" = "latest"
 
 [tasks.trigger]
-description = "Trigger the data step function (drifting / anonymisation)"
-run = "uv run trigger_step_function.py"
+description = "Trigger the test DB date-drifting step function"
+run = "uv run test_db.py"
 
 [tasks.bastion]
 description = "Open an SSM port-forwarding tunnel to a private RDS instance"

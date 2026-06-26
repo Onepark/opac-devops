@@ -1,3 +1,11 @@
+# Editors / tooling
 /.idea/
 .python-version
-lambda/utils/__pycache__/
+.mcp.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/

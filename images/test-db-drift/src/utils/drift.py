@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import os
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import psycopg2
@@ -39,21 +40,34 @@ def drift_table(
     return row_count
 
 
+def _definition_references_column(definition: str, column: str) -> bool:
+    """True if *definition* references *column* as an identifier.
+
+    Matches the column name on word boundaries (case-sensitively, since
+    PostgreSQL stores unquoted identifiers in lower case and emits keywords in
+    upper case). This catches a column used only inside an expression — e.g.
+    tsrange("begin", "end") in an overlap exclusion constraint — while avoiding
+    substring false positives such as "end" inside "weekend".
+    """
+    return re.search(rf"\b{re.escape(column)}\b", definition) is not None
+
+
 def find_disruptive_constraints(
     conn,
     schema: str,
     table_columns: dict[str, tuple[str, ...]],
 ) -> list[dict]:
-    """Find CHECK and EXCLUDE constraints whose conkey overlaps drifted columns.
+    """Find CHECK and EXCLUDE constraints that reference a drifted column.
 
-    Only considers tables present in *table_columns* and only constraints
-    whose referenced columns (conkey → attnum → attname) include at least one
-    drifted column for that table.
+    Detection is based on the full constraint definition text
+    (pg_get_constraintdef), not pg_constraint.conkey. conkey lists only
+    directly-referenced columns and omits any column used inside an expression,
+    so an overlap exclusion constraint such as
+    ``EXCLUDE USING gist (..., tsrange("begin", "end") WITH &&)`` has begin/end
+    absent from conkey. A conkey-based match would miss it and the drift UPDATE
+    would then violate the still-present constraint.
     """
     table_names = list(table_columns.keys())
-    drifted_column_names: set[str] = set()
-    for cols in table_columns.values():
-        drifted_column_names.update(cols)
 
     with conn.cursor() as c:
         c.execute(
@@ -70,26 +84,25 @@ def find_disruptive_constraints(
             WHERE n.nspname = %s
               AND con.contype IN ('c', 'x')
               AND c.relname = ANY(%s)
-              AND EXISTS (
-                  SELECT 1
-                  FROM pg_attribute a
-                  WHERE a.attrelid = con.conrelid
-                    AND a.attnum = ANY(con.conkey)
-                    AND a.attname = ANY(%s)
-              )
             """,
-            (schema, table_names, list(drifted_column_names)),
+            (schema, table_names),
         )
-        return [
-            {
-                "schema": row[0],
-                "table": row[1],
-                "name": row[2],
-                "definition": row[3],
-                "type": row[4],
-            }
-            for row in c.fetchall()
-        ]
+        rows = c.fetchall()
+
+    constraints: list[dict] = []
+    for schema_name, table_name, constraint_name, constraint_def, constraint_type in rows:
+        drifted_columns = table_columns.get(table_name, ())
+        if any(_definition_references_column(constraint_def, col) for col in drifted_columns):
+            constraints.append(
+                {
+                    "schema": schema_name,
+                    "table": table_name,
+                    "name": constraint_name,
+                    "definition": constraint_def,
+                    "type": constraint_type,
+                }
+            )
+    return constraints
 
 
 def drop_constraints(conn, constraints: list[dict]) -> None:

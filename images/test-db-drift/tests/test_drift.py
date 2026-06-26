@@ -123,6 +123,41 @@ def test_find_disruptive_constraints_empty():
     assert result == []
 
 
+def test_find_disruptive_constraints_detects_expression_wrapped_columns():
+    # Regression: begin/end live inside tsrange(...) so they are absent from
+    # pg_constraint.conkey. The old conkey-based detector missed this overlap
+    # exclusion constraint, so the drift UPDATE violated it.
+    rows = [
+        (
+            "public",
+            "entity_availabilities",
+            "entity_availabilities_overlap_constraint",
+            "EXCLUDE USING gist (entity_id WITH =, parking_category_id WITH =, "
+            'type WITH =, tsrange("begin", "end", \'[)\'::text) WITH &&)',
+            "x",
+        ),
+    ]
+    conn = FakeConn(fetchall_result=rows)
+    table_columns = {"entity_availabilities": ("begin", "end")}
+    result = find_disruptive_constraints(conn, "public", table_columns)
+
+    assert len(result) == 1
+    assert result[0]["name"] == "entity_availabilities_overlap_constraint"
+    assert result[0]["type"] == "x"
+
+
+def test_find_disruptive_constraints_ignores_unrelated_columns():
+    # A constraint that mentions no drifted column must not be dropped, and
+    # word boundaries must avoid substring false positives ("end" in "weekend").
+    rows = [
+        ("public", "customers", "chk_pos", "CHECK (weekend_count >= 0)", "c"),
+    ]
+    conn = FakeConn(fetchall_result=rows)
+    table_columns = {"customers": ("begin", "end")}
+    result = find_disruptive_constraints(conn, "public", table_columns)
+    assert result == []
+
+
 # ---------------------------------------------------------------------------
 # drop_constraints / recreate_constraints
 # ---------------------------------------------------------------------------
